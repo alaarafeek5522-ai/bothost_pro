@@ -267,21 +267,96 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.setLoading(false);
   }
 
-  Future<void> _deleteBot() async {
+  // ========== إيقاف البوت فقط ==========
+  Future<void> _stopBotOnly() async {
+    final provider = context.read<AppProvider>();
+    if (provider.myBot == null || provider.servers.isEmpty) return;
+
+    final user = await AuthService.getCurrentUser();
+    if (user == null) return;
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Row(
           children: [
-            Icon(Icons.warning, color: Color(0xFFE94560)),
+            Icon(Icons.stop_circle, color: Color(0xFFFFA726)),
             SizedBox(width: 10),
-            Text('⚠️ تأكيد الحذف'),
+            Text('⏹️ إيقاف البوت'),
           ],
         ),
         content: const Text(
-          'هل أنت متأكد من حذف البوت؟\n\n'
-          'الحذف نهائي!\n'
-          'هتقدر ترفع بوت تاني بعد الحذف.',
+          'هيتم إيقاف البوت مؤقتاً.\n\n'
+          'الملفات هتفضل موجودة على السيرفر.\n'
+          'تقدم تشغله تاني لاحقاً.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFFA726)),
+            child: const Text('إيقاف'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    provider.setLoading(true);
+    _showStep('⏹️ جاري إيقاف البوت...');
+
+    try {
+      final server = provider.servers.firstWhere(
+        (s) => s.name == provider.myBot!.serverName,
+      );
+      final stopped = await SSHService.stopBot(server, provider.myBot!.name, user.deviceId);
+      
+      if (stopped) {
+        _showStep('✅ تم إيقاف البوت');
+        provider.setBot(BotModel(
+          name: provider.myBot!.name,
+          serverName: provider.myBot!.serverName,
+          status: 'متوقف ⏹️',
+          createdAt: provider.myBot!.createdAt,
+        ));
+      } else {
+        _showStep('⚠️ البوت متوقف بالفعل أو مفيش process');
+      }
+    } catch (e) {
+      _showStep('❌ فشل الإيقاف: $e');
+    }
+
+    provider.setLoading(false);
+  }
+
+  // ========== حذف نهائي من السيرفر ==========
+  Future<void> _deleteBotForever() async {
+    final provider = context.read<AppProvider>();
+    if (provider.myBot == null || provider.servers.isEmpty) return;
+
+    final user = await AuthService.getCurrentUser();
+    if (user == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever, color: Color(0xFFE94560)),
+            SizedBox(width: 10),
+            Text('🗑️ حذف نهائي'),
+          ],
+        ),
+        content: const Text(
+          '⚠️ تحذير: الحذف نهائي ولا يمكن التراجع!\n\n'
+          '1. البوت هيتوقف\n'
+          '2. الملفات هتمسح من السيرفر\n'
+          '3. هتقدر ترفع بوت جديد\n\n'
+          'متأكد؟',
         ),
         actions: [
           TextButton(
@@ -299,16 +374,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (confirm != true) return;
 
-    final provider = context.read<AppProvider>();
-    final user = await AuthService.getCurrentUser();
-    if (user == null || provider.myBot == null) return;
+    provider.setLoading(true);
+    _showStep('🗑️ جاري الحذف النهائي...');
 
     try {
       final server = provider.servers.firstWhere(
         (s) => s.name == provider.myBot!.serverName,
       );
-      await SSHService.deleteBot(server, provider.myBot!.name, user.deviceId);
       
+      // حذف من السيرفر
+      final deleted = await SSHService.deleteBotFromServer(
+        server, 
+        provider.myBot!.name, 
+        user.deviceId
+      );
+      
+      if (!deleted) {
+        throw Exception('فشل حذف الملفات من السيرفر');
+      }
+
+      // تحديث الحالة
       await AuthService.setBotStatus(false);
       setState(() => _hasBot = false);
 
@@ -318,10 +403,13 @@ class _HomeScreenState extends State<HomeScreen> {
       }
       
       await provider.clearSavedBot();
-      _showStep('🗑️ تم حذف البوت نهائياً\nتقدر ترفع بوت جديد!');
+      _showStep('✅ تم الحذف النهائي!\nتقدر ترفع بوت جديد');
+
     } catch (e) {
       _showStep('❌ فشل الحذف: $e');
     }
+
+    provider.setLoading(false);
   }
 
   Future<void> _openTelegram() async {
@@ -458,7 +546,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              '⚠️ عندك بوت شغال بالفعل!\nلو عايز بوت جديد، احذف القديم الأول.',
+                              '⚠️ عندك بوت!\nلو عايز بوت جديد، احذف القديم الأول.',
                               style: TextStyle(color: Color(0xFFFFA726), fontSize: 12),
                             ),
                           ),
@@ -621,7 +709,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               const Icon(Icons.check_circle, color: Color(0xFF00BFA6)),
                               const SizedBox(width: 8),
                               Text(
-                                'بوتك شغال! 🎉',
+                                'بوتك! 🎉',
                                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                       color: const Color(0xFF00BFA6),
                                       fontWeight: FontWeight.bold,
@@ -637,28 +725,50 @@ class _HomeScreenState extends State<HomeScreen> {
                             _buildInfoRow('التاريخ:', provider.myBot!.createdAt.toString().substring(0, 16)),
                           ],
                           const SizedBox(height: 15),
-                          Row(
+                          
+                          // ========== الأزرار الجديدة ==========
+                          Column(
                             children: [
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: _restartBot,
-                                  icon: const Icon(Icons.refresh, size: 18),
-                                  label: const Text('إعادة تشغيل'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF00BFA6),
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                              // صف 1: إعادة تشغيل + إيقاف
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: _restartBot,
+                                      icon: const Icon(Icons.refresh, size: 18),
+                                      label: const Text('إعادة تشغيل'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF00BFA6),
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: ElevatedButton.icon(
+                                      onPressed: _stopBotOnly,
+                                      icon: const Icon(Icons.stop_circle, size: 18),
+                                      label: const Text('إيقاف'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFFFFA726),
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  onPressed: _deleteBot,
-                                  icon: const Icon(Icons.delete, size: 18, color: Color(0xFFE94560)),
-                                  label: const Text('حذف', style: TextStyle(color: Color(0xFFE94560))),
-                                  style: OutlinedButton.styleFrom(
-                                    side: const BorderSide(color: Color(0xFFE94560)),
-                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                              const SizedBox(height: 10),
+                              
+                              // صف 2: حذف نهائي
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: _deleteBotForever,
+                                  icon: const Icon(Icons.delete_forever, size: 18),
+                                  label: const Text('🗑️ حذف نهائي من السيرفر'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFE94560),
+                                    padding: const EdgeInsets.symmetric(vertical: 14),
                                   ),
                                 ),
                               ),

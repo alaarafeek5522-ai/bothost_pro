@@ -2,34 +2,43 @@ import 'package:url_launcher/url_launcher.dart';
 
 class TelegramService {
   static const String _channelUrl = 'https://t.me/ahrgq';
-  static const String _supportUrl = 'https://t.me/ahrgq';
 
   static Future<bool> openChannel() async {
-    return await _openUrl(_channelUrl);
-  }
-
-  static Future<bool> openSupport() async {
-    return await _openUrl(_supportUrl);
-  }
-
-  static Future<bool> _openUrl(String urlString) async {
-    final uri = Uri.parse(urlString);
+    final uri = Uri.parse(_channelUrl);
     
-    // نجرب الطريقة المباشرة الأولى
-    if (await canLaunchUrl(uri)) {
-      return await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+    // نجرب فتح الرابط مباشرة
+    try {
+      if (await canLaunchUrl(uri)) {
+        return await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
     }
     
-    // لو فشلت، نجرب بـ tg://
-    final tgUri = Uri.parse('tg://resolve?domain=ahrgq');
-    if (await canLaunchUrl(tgUri)) {
+    // لو فشل، نجرب بـ tg://
+    try {
+      final tgUri = Uri.parse('tg://resolve?domain=ahrgq');
+      if (await canLaunchUrl(tgUri)) {
+        return await launchUrl(
+          tgUri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+    } catch (e) {
+      print('Error launching tg://: $e');
+    }
+    
+    // آخر محاولة: نفتح في المتصفح
+    try {
       return await launchUrl(
-        tgUri,
-        mode: LaunchMode.externalApplication,
+        uri,
+        mode: LaunchMode.platformDefault,
       );
+    } catch (e) {
+      print('Final launch error: $e');
     }
     
     return false;
