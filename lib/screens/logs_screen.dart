@@ -12,6 +12,7 @@ class LogsScreen extends StatefulWidget {
 
 class _LogsScreenState extends State<LogsScreen> {
   bool _isLoading = false;
+  String _detailedLogs = '';
 
   Future<void> _refreshLogs() async {
     final provider = context.read<AppProvider>();
@@ -25,11 +26,19 @@ class _LogsScreenState extends State<LogsScreen> {
       );
       final logs = await SSHService.getLogs(server, provider.myBot!.name);
       provider.setLogs(logs);
+      setState(() => _detailedLogs = logs);
     } catch (e) {
       provider.setLogs('فشل في جلب السجلات: $e');
+      setState(() => _detailedLogs = 'فشل في جلب السجلات: $e');
     }
 
     setState(() => _isLoading = false);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshLogs();
   }
 
   @override
@@ -88,13 +97,14 @@ class _LogsScreenState extends State<LogsScreen> {
                         ? const Center(child: CircularProgressIndicator())
                         : SingleChildScrollView(
                             child: SelectableText(
-                              provider.logs.isEmpty
+                              _detailedLogs.isEmpty
                                   ? 'اضغط 🔄 عشان تجيب السجلات'
-                                  : provider.logs,
+                                  : _detailedLogs,
                               style: const TextStyle(
                                 fontFamily: 'monospace',
-                                fontSize: 12,
+                                fontSize: 11,
                                 color: Color(0xFF00FF00),
+                                height: 1.5,
                               ),
                             ),
                           ),

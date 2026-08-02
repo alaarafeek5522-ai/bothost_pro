@@ -71,6 +71,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  bool _isValidBotName(String name) {
+    final regex = RegExp(r'^[a-zA-Z0-9_-]+$');
+    return regex.hasMatch(name);
+  }
+
   void _showStep(String message) {
     setState(() {
       _deploySteps.add(message);
@@ -79,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        duration: const Duration(seconds: 2),
+        duration: const Duration(seconds: 3),
         backgroundColor: message.startsWith('❌') 
             ? const Color(0xFFE94560) 
             : message.startsWith('✅')
@@ -92,6 +97,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _deployBot() async {
     if (_botFile == null || _botNameController.text.isEmpty) {
       _showStep('❌ اختار ملف البوت واكتب الاسم');
+      return;
+    }
+
+    final botName = _botNameController.text.trim();
+
+    if (!_isValidBotName(botName)) {
+      _showStep('❌ اسم البوت لازم يكون إنجليزي فقط (a-z, 0-9, -, _)');
       return;
     }
 
@@ -117,10 +129,9 @@ class _HomeScreenState extends State<HomeScreen> {
         botFile: _botFile!,
         botFileName: _botFileName,
         reqFile: _reqFile,
-        botName: _botNameController.text.trim(),
+        botName: botName,
       );
 
-      // نظهر كل خطوة
       for (final entry in steps.entries) {
         _showStep(entry.value);
       }
@@ -128,7 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final finalStatus = steps['run'] ?? '✅ تم التشغيل';
       
       provider.setBot(BotModel(
-        name: _botNameController.text.trim(),
+        name: botName,
         serverName: server.name,
         status: finalStatus,
         createdAt: DateTime.now(),
@@ -144,6 +155,57 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     provider.setLoading(false);
+  }
+
+  Future<void> _restartBot() async {
+    final provider = context.read<AppProvider>();
+    if (provider.myBot == null || provider.servers.isEmpty) return;
+
+    provider.setLoading(true);
+    _showStep('🔄 جاري إعادة تشغيل البوت...');
+
+    try {
+      final server = provider.servers.firstWhere(
+        (s) => s.name == provider.myBot!.serverName,
+      );
+      final pid = await SSHService.restartBot(
+        server, 
+        provider.myBot!.name,
+        'bot.py'
+      );
+      _showStep('✅ تم إعادة التشغيل! PID: $pid');
+      
+      provider.setBot(BotModel(
+        name: provider.myBot!.name,
+        serverName: provider.myBot!.serverName,
+        status: 'تم إعادة التشغيل ✅ PID: $pid',
+        createdAt: provider.myBot!.createdAt,
+      ));
+    } catch (e) {
+      _showStep('❌ فشل إعادة التشغيل: $e');
+    }
+
+    provider.setLoading(false);
+  }
+
+  Future<void> _deleteBot() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('⚠️ تأكيد الحذف'),
+        content: const Text('هل أنت متأكد من حذف البوت؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('حذف', style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final provider = context.read<AppProvider>();
+    await provider.clearSavedBot();
+    _showStep('🗑️ تم حذف البوت');
   }
 
   @override
@@ -193,12 +255,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   TextField(
                     controller: _botNameController,
                     decoration: InputDecoration(
-                      labelText: 'اسم البوت',
-                      hintText: 'مثال: MyTelegramBot',
+                      labelText: 'اسم البوت (إنجليزي فقط)',
+                      hintText: 'مثال: my_bot, bot123, test-bot',
                       prefixIcon: const Icon(Icons.smart_toy),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                       filled: true,
                       fillColor: const Color(0xFF16213E),
+                      helperText: 'a-z, 0-9, -, _ فقط',
+                      helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
                     ),
                   ),
                   const SizedBox(height: 15),
@@ -333,6 +397,34 @@ class _HomeScreenState extends State<HomeScreen> {
                           Text('السيرفر: ${provider.myBot!.serverName}'),
                           Text('الحالة: ${provider.myBot!.status}'),
                           Text('تاريخ الإنشاء: ${provider.myBot!.createdAt.toString().substring(0, 16)}'),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: _restartBot,
+                                  icon: const Icon(Icons.refresh, size: 18),
+                                  label: const Text('إعادة تشغيل'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF00BFA6),
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  onPressed: _deleteBot,
+                                  icon: const Icon(Icons.delete, size: 18, color: Color(0xFFE94560)),
+                                  label: const Text('حذف', style: TextStyle(color: Color(0xFFE94560))),
+                                  style: OutlinedButton.styleFrom(
+                                    side: const BorderSide(color: Color(0xFFE94560)),
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),

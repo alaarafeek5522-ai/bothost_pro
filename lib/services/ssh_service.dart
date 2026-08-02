@@ -75,22 +75,47 @@ class SSHService {
         steps['upload_req'] = '⏭️ مفيش requirements.txt';
       }
 
-      // Step 5: تثبيت المتطلبات
+      // Step 5: تثبيت المتطلبات (محسّن)
       steps['install'] = '🔄 جاري تثبيت المتطلبات...';
-      final installResult = await client.execute(
-        'cd /root/bots/$botName && pip3 install -r requirements.txt 2>&1 || python3 -m pip install -r requirements.txt 2>&1 || echo "NO_REQ"'
-      );
-      final installOutput = await _readStream(installResult.stdout);
-      await installResult.done;
       
-      if (installOutput.contains('ERROR') || installOutput.contains('Failed')) {
-        steps['install'] = '⚠️ تحذير في التثبيت';
-      } else {
+      // نجرب pip3 أولاً، بعدين python3 -m pip
+      final installCmd = '''
+        cd /root/bots/$botName && 
+        (pip3 install -r requirements.txt 2>&1 && echo "===INSTALL_OK===") || 
+        (python3 -m pip install -r requirements.txt 2>&1 && echo "===INSTALL_OK===") || 
+        (pip install -r requirements.txt 2>&1 && echo "===INSTALL_OK===") || 
+        echo "===INSTALL_FAILED==="
+      ''';
+      
+      final installResult = await client.execute(installCmd);
+      final installOutput = await _readStream(installResult.stdout);
+      final installError = await _readStream(installResult.stderr);
+      await installResult.done;
+
+      // نحفظ اللوج كامل
+      final fullInstallLog = 'STDOUT:\\n$installOutput\\n\\nSTDERR:\\n$installError';
+      
+      if (installOutput.contains('===INSTALL_OK===')) {
         steps['install'] = '✅ تم تثبيت المتطلبات';
+      } else {
+        steps['install'] = '❌ فشل تثبيت المتطلبات';
+        steps['install_log'] = fullInstallLog;
+        throw Exception('فشل تثبيت المتطلبات:\\n$fullInstallLog');
       }
 
       // Step 6: تشغيل البوت
       steps['run'] = '🔄 جاري تشغيل البوت...';
+      
+      // نتأكد إن telebot موجود
+      final checkResult = await client.execute('python3 -c "import telebot; print(\\\"OK\\\")" 2>&1 || echo "MODULE_MISSING"');
+      final checkOutput = await _readStream(checkResult.stdout);
+      await checkResult.done;
+      
+      if (checkOutput.contains('MODULE_MISSING')) {
+        steps['run'] = '❌ مكتبة telebot مش متوفرة بعد التثبيت';
+        throw Exception('مكتبة telebot مش متوفرة - جرب تثبيت يدوي: pip3 install pyTelegramBotAPI');
+      }
+
       final runResult = await client.execute(
         'cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
       );
@@ -119,10 +144,39 @@ class SSHService {
   static Future<String> getLogs(ServerModel server, String botName) async {
     final client = await _connect(server);
     try {
-      final result = await client.execute('cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet"');
+      // نجيب bot.log + نتأكد إن البوت شغال
+      final result = await client.execute('''
+        echo "=== BOT LOG ===" && 
+        cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet" &&
+        echo "" &&
+        echo "=== PROCESS STATUS ===" &&
+        ps aux | grep "$botName" | grep -v grep || echo "Bot process not found" &&
+        echo "" &&
+        echo "=== PYTHON PACKAGES ===" &&
+        pip3 list 2>/dev/null | grep -i telebot || pip list 2>/dev/null | grep -i telebot || echo "telebot not in pip list"
+      ''');
       final output = await _readStream(result.stdout);
       await result.done;
       return output;
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<String> restartBot(ServerModel server, String botName, String botFileName) async {
+    final client = await _connect(server);
+    try {
+      // نوقف البوت القديم
+      await client.execute('pkill -f "/root/bots/$botName/$botFileName" || true');
+      await Future.delayed(const Duration(seconds: 1));
+      
+      // نشغله تاني
+      final result = await client.execute(
+        'cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
+      );
+      final output = await _readStream(result.stdout);
+      await result.done;
+      return output.trim();
     } finally {
       client.close();
     }
