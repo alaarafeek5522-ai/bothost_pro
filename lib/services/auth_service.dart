@@ -1,11 +1,11 @@
 import 'dart:convert';
 import 'dart:math';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'github_api_service.dart';
 import '../models/user_model.dart';
 
 class AuthService {
-  static const String _usersUrl = 'https://raw.githubusercontent.com/alaarafeek5522-ai/bothost-servers/master/users.json';
+  static const String _usersFile = 'users.json';
   static const String _userKey = 'current_user';
   static const String _deviceIdKey = 'device_id';
   static const String _hasBotKey = 'has_bot';
@@ -29,35 +29,33 @@ class AuthService {
     return List.generate(16, (_) => chars[random.nextInt(chars.length)]).join();
   }
 
-  // ========== FETCH USERS FROM GITHUB ==========
-  static Future<List<Map<String, dynamic>>> _fetchUsersFromGitHub() async {
-    try {
-      final response = await http.get(Uri.parse(_usersUrl)).timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return List<Map<String, dynamic>>.from(data['users'] ?? []);
-      }
-    } catch (e) {
-      print('فشل جلب المستخدمين من GitHub: $e');
-    }
-    return [];
+  // ========== جلب المستخدمين من GitHub ==========
+  static Future<List<Map<String, dynamic>>> _fetchUsers() async {
+    final data = await GitHubAPIService.getFile(_usersFile);
+    if (data == null) return [];
+    return List<Map<String, dynamic>>.from(data['users'] ?? []);
   }
 
-  // ========== CHECK IF EMAIL EXISTS ==========
+  // ========== حفظ المستخدمين على GitHub ==========
+  static Future<bool> _saveUsers(List<Map<String, dynamic>> users) async {
+    return await GitHubAPIService.updateFile(_usersFile, {'users': users});
+  }
+
+  // ========== التحقق من الإيميل ==========
   static Future<bool> emailExists(String email) async {
-    final users = await _fetchUsersFromGitHub();
+    final users = await _fetchUsers();
     return users.any((u) => u['email'] == email);
   }
 
-  // ========== CHECK IF DEVICE EXISTS ==========
+  // ========== التحقق من الجهاز ==========
   static Future<bool> deviceExists(String deviceId) async {
-    final users = await _fetchUsersFromGitHub();
+    final users = await _fetchUsers();
     return users.any((u) => u['deviceId'] == deviceId);
   }
 
-  // ========== CHECK IF USER HAS BOT ==========
+  // ========== التحقق إن المستخدم عنده بوت ==========
   static Future<bool> userHasBot(String deviceId) async {
-    final users = await _fetchUsersFromGitHub();
+    final users = await _fetchUsers();
     final user = users.firstWhere(
       (u) => u['deviceId'] == deviceId,
       orElse: () => {},
@@ -66,18 +64,18 @@ class AuthService {
     return user['hasBot'] == true;
   }
 
-  // ========== REGISTER ==========
+  // ========== تسجيل جديد ==========
   static Future<UserModel?> register(String email, String password) async {
     final deviceId = await getDeviceId();
 
-    // التحقق 1: الإيميل مستخدم قبل كده؟
+    // التحقق 1: الإيميل مستخدم؟
     if (await emailExists(email)) {
       throw Exception('❌ الإيميل ده مستخدم قبل كده');
     }
 
-    // التحقق 2: الجهاز مسجل قبل كده؟ (حساب واحد للجهاز)
+    // التحقق 2: الجهاز مسجل؟
     if (await deviceExists(deviceId)) {
-      throw Exception('❌ الجهاز ده مسجل قبل كده بحساب تاني.\nجهاز واحد = حساب واحد فقط!');
+      throw Exception('❌ الجهاز ده مسجل قبل كده!\nجهاز واحد = حساب واحد فقط');
     }
 
     // التحقق 3: صحة الإيميل
@@ -90,14 +88,26 @@ class AuthService {
       throw Exception('❌ الباسورد لازم 6 أحرف على الأقل');
     }
 
-    final user = UserModel(
-      id: deviceId,
-      email: email,
-      password: _hashPassword(password),
-      deviceId: deviceId,
-      hasBot: false,
-      createdAt: DateTime.now(),
-    );
+    final users = await _fetchUsers();
+    
+    final newUser = {
+      'id': deviceId,
+      'email': email,
+      'password': _hashPassword(password),
+      'deviceId': deviceId,
+      'hasBot': false,
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+
+    users.add(newUser);
+
+    // حفظ على GitHub
+    final saved = await _saveUsers(users);
+    if (!saved) {
+      throw Exception('❌ فشل حفظ الحساب على السيرفر - جرب تاني');
+    }
+
+    final user = UserModel.fromJson(newUser);
 
     // حفظ محلي
     final prefs = await SharedPreferences.getInstance();
@@ -107,9 +117,9 @@ class AuthService {
     return user;
   }
 
-  // ========== LOGIN ==========
+  // ========== تسجيل دخول ==========
   static Future<UserModel?> login(String email, String password) async {
-    final users = await _fetchUsersFromGitHub();
+    final users = await _fetchUsers();
     
     final userData = users.firstWhere(
       (u) => u['email'] == email,
@@ -130,10 +140,10 @@ class AuthService {
     return user;
   }
 
-  // ========== QUICK LOGIN (BY DEVICE) ==========
+  // ========== تسجيل دخول سريع ==========
   static Future<UserModel?> quickLogin() async {
     final deviceId = await getDeviceId();
-    final users = await _fetchUsersFromGitHub();
+    final users = await _fetchUsers();
     
     try {
       final userData = users.firstWhere((u) => u['deviceId'] == deviceId);
@@ -149,7 +159,26 @@ class AuthService {
     }
   }
 
-  // ========== GET CURRENT USER ==========
+  // ========== تحديث حالة البوت ==========
+  static Future<bool> updateBotStatus(String deviceId, bool hasBot) async {
+    final users = await _fetchUsers();
+    
+    final index = users.indexWhere((u) => u['deviceId'] == deviceId);
+    if (index == -1) return false;
+
+    users[index]['hasBot'] = hasBot;
+    
+    final saved = await _saveUsers(users);
+    
+    if (saved) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_hasBotKey, hasBot);
+    }
+    
+    return saved;
+  }
+
+  // ========== جلب المستخدم الحالي ==========
   static Future<UserModel?> getCurrentUser() async {
     final prefs = await SharedPreferences.getInstance();
     final userJson = prefs.getString(_userKey);
@@ -157,28 +186,27 @@ class AuthService {
     return UserModel.fromJson(jsonDecode(userJson));
   }
 
-  // ========== CHECK IF CURRENT USER HAS BOT ==========
+  // ========== التحقق من البوت ==========
   static Future<bool> currentUserHasBot() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_hasBotKey) ?? false;
   }
 
-  // ========== SET BOT STATUS ==========
+  // ========== تعيين حالة البوت محلياً ==========
   static Future<void> setBotStatus(bool hasBot) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_hasBotKey, hasBot);
   }
 
-  // ========== LOGOUT ==========
+  // ========== تسجيل خروج ==========
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_userKey);
     await prefs.remove(_hasBotKey);
   }
 
-  // ========== PASSWORD HASH ==========
+  // ========== تشفير الباسورد ==========
   static String _hashPassword(String password) {
-    // بسيط — في الإنتاج استخدم bcrypt
     return base64Encode(utf8.encode(password));
   }
 }

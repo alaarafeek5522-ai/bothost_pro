@@ -1,3 +1,4 @@
+
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -7,6 +8,7 @@ import '../services/server_service.dart';
 import '../services/ssh_service.dart';
 import '../services/auth_service.dart';
 import '../services/telegram_service.dart';
+import '../services/github_api_service.dart';
 import '../services/update_service.dart';
 import '../models/bot_model.dart';
 import 'logs_screen.dart';
@@ -35,16 +37,22 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _loadUser();
     _loadServers();
+    _loadBotStatus();
     _checkUpdate();
   }
 
   Future<void> _loadUser() async {
     final user = await AuthService.getCurrentUser();
     if (user != null) {
-      setState(() {
-        _userEmail = user.email;
-        _hasBot = user.hasBot;
-      });
+      setState(() => _userEmail = user.email);
+    }
+  }
+
+  Future<void> _loadBotStatus() async {
+    final user = await AuthService.getCurrentUser();
+    if (user != null) {
+      final hasBot = await AuthService.userHasBot(user.deviceId);
+      setState(() => _hasBot = hasBot);
     }
   }
 
@@ -142,7 +150,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _deployBot() async {
-    // ========== التحقق 1: ملف البوت ==========
     if (_botFile == null || _botNameController.text.isEmpty) {
       _showStep('❌ اختار ملف البوت واكتب الاسم');
       return;
@@ -150,20 +157,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final botName = _botNameController.text.trim();
 
-    // ========== التحقق 2: اسم صالح ==========
     if (!_isValidBotName(botName)) {
       _showStep('❌ اسم البوت لازم يكون إنجليزي فقط (a-z, 0-9, -, _)');
       return;
     }
 
-    // ========== التحقق 3: المستخدم مسجل ==========
     final user = await AuthService.getCurrentUser();
     if (user == null) {
       _showStep('❌ لازم تسجل دخول الأول');
       return;
     }
 
-    // ========== التحقق 4: بوت واحد فقط! ==========
     if (await AuthService.currentUserHasBot() || _hasBot) {
       _showStep('❌ عندك بوت شغال بالفعل!\nكل حساب = بوت واحد فقط');
       return;
@@ -201,9 +205,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final finalStatus = steps['run'] ?? '✅ تم التشغيل';
       
-      // ========== نحدث الحالة: عندك بوت ==========
       await AuthService.setBotStatus(true);
       setState(() => _hasBot = true);
+
+      final currentUser = await AuthService.getCurrentUser();
+      if (currentUser != null) {
+        await AuthService.updateBotStatus(currentUser.deviceId, true);
+      }
       
       provider.setBot(BotModel(
         name: botName,
@@ -273,7 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
         content: const Text(
           'هل أنت متأكد من حذف البوت؟\n\n'
           'الحذف نهائي!\n'
-          'هتقدم ترفع بوت تاني بعد الحذف.',
+          'هتقدر ترفع بوت تاني بعد الحذف.',
         ),
         actions: [
           TextButton(
@@ -301,12 +309,16 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       await SSHService.deleteBot(server, provider.myBot!.name, user.deviceId);
       
-      // ========== نحدث الحالة: مفيش بوت ==========
       await AuthService.setBotStatus(false);
       setState(() => _hasBot = false);
+
+      final currentUser = await AuthService.getCurrentUser();
+      if (currentUser != null) {
+        await AuthService.updateBotStatus(currentUser.deviceId, false);
+      }
       
       await provider.clearSavedBot();
-      _showStep('🗑️ تم حذف البوت نهائياً\nتقدم ترفع بوت جديد!');
+      _showStep('🗑️ تم حذف البوت نهائياً\nتقدر ترفع بوت جديد!');
     } catch (e) {
       _showStep('❌ فشل الحذف: $e');
     }
@@ -377,7 +389,6 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // Header
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -432,7 +443,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 25),
 
-                  // ========== تحذير: بوت واحد فقط ==========
                   if (_hasBot || provider.myBot != null)
                     Container(
                       padding: const EdgeInsets.all(12),
@@ -456,7 +466,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
 
-                  // Bot Name
                   if (!_hasBot && provider.myBot == null)
                     TextField(
                       controller: _botNameController,
@@ -473,7 +482,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   if (!_hasBot && provider.myBot == null) const SizedBox(height: 15),
 
-                  // Bot File
                   if (!_hasBot && provider.myBot == null)
                     _buildFileCard(
                       icon: Icons.code,
@@ -484,7 +492,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   if (!_hasBot && provider.myBot == null) const SizedBox(height: 10),
 
-                  // Requirements File
                   if (!_hasBot && provider.myBot == null)
                     _buildFileCard(
                       icon: Icons.list_alt,
@@ -495,7 +502,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   if (!_hasBot && provider.myBot == null) const SizedBox(height: 20),
 
-                  // Deploy Button
                   if (!_hasBot && provider.myBot == null)
                     SizedBox(
                       height: 55,
@@ -522,7 +528,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   if (!_hasBot && provider.myBot == null) const SizedBox(height: 15),
 
-                  // Progress Steps
                   if (_deploySteps.isNotEmpty) ...[
                     Container(
                       padding: const EdgeInsets.all(15),
@@ -593,7 +598,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 15),
                   ],
 
-                  // My Bot Status
                   if (provider.myBot != null || _hasBot) ...[
                     Container(
                       padding: const EdgeInsets.all(15),
@@ -676,7 +680,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                   const Spacer(),
 
-                  // Servers Status
                   if (provider.servers.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.all(12),
@@ -878,3 +881,4 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+
