@@ -15,6 +15,14 @@ class SSHService {
     return client;
   }
 
+  static Future<String> _readStream(Stream<Uint8List> stream) async {
+    final bytes = <int>[];
+    await for (final chunk in stream) {
+      bytes.addAll(chunk);
+    }
+    return utf8.decode(bytes);
+  }
+
   static Future<Map<String, String>> deployBot({
     required ServerModel server,
     required Uint8List botFile,
@@ -72,11 +80,11 @@ class SSHService {
       final installResult = await client.execute(
         'cd /root/bots/$botName && pip3 install -r requirements.txt 2>&1 || python3 -m pip install -r requirements.txt 2>&1 || echo "NO_REQ"'
       );
-      final installOutput = await installResult.stdout.transform(utf8.decoder).join();
+      final installOutput = await _readStream(installResult.stdout);
       await installResult.done;
       
       if (installOutput.contains('ERROR') || installOutput.contains('Failed')) {
-        steps['install'] = '⚠️ تحذير في التثبيت: ${installOutput.substring(0, installOutput.length > 100 ? 100 : installOutput.length)}';
+        steps['install'] = '⚠️ تحذير في التثبيت';
       } else {
         steps['install'] = '✅ تم تثبيت المتطلبات';
       }
@@ -86,7 +94,7 @@ class SSHService {
       final runResult = await client.execute(
         'cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
       );
-      final runOutput = await runResult.stdout.transform(utf8.decoder).join();
+      final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
       
       final pid = runOutput.trim();
@@ -97,7 +105,6 @@ class SSHService {
       steps['run'] = '✅ البوت شغال! PID: $pid';
 
     } catch (e) {
-      // لو فيه خطأ في أي خطوة
       if (!steps.containsKey('run')) {
         steps['error'] = '❌ خطأ: $e';
       }
@@ -113,7 +120,7 @@ class SSHService {
     final client = await _connect(server);
     try {
       final result = await client.execute('cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet"');
-      final output = await result.stdout.transform(utf8.decoder).join();
+      final output = await _readStream(result.stdout);
       await result.done;
       return output;
     } finally {
