@@ -137,7 +137,7 @@ class SSHService {
 
       steps['run'] = '🔄 جاري تشغيل البوت...';
       final runResult = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
+        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
       );
       final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
@@ -177,9 +177,9 @@ class SSHService {
         sleep 2
         
         # لو لسه شغال، اقتل بـ PID
-        for pid in $(ps aux | grep "$botDir" | grep -v grep | awk '{print $2}'); do
-          echo "Killing PID: $pid"
-          kill -9 $pid 2>/dev/null || true
+        for pid in \$(ps aux | grep "$botDir" | grep -v grep | awk '{print \$2}'); do
+          echo "Killing PID: \$pid"
+          kill -9 \$pid 2>/dev/null || true
         done
         
         # استنى تاني
@@ -257,7 +257,7 @@ class SSHService {
     try {
       final botDir = '/root/bots/user_$userId/$botName';
       final result = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
+        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
       );
       final output = await _readStream(result.stdout);
       await result.done;
