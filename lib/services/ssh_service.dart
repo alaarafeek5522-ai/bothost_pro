@@ -1,17 +1,14 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:dartssh2/dartssh2.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/server_model.dart';
 
 class SSHService {
-  static Future<SSHClient> connect(ServerModel server) async {
-    final socket = await SSHSocket.connect(server.host, server.port);
-    final client = SSHClient(
-      socket,
-      username: server.user,
-      onPasswordRequest: () => server.password,
-    );
-    return client;
+  static Future<String> _writeTempFile(Uint8List data, String name) async {
+    final dir = await getTemporaryDirectory();
+    final path = '${dir.path}/$name';
+    await File(path).writeAsBytes(data);
+    return path;
   }
 
   static Future<String> deployBot({
@@ -21,57 +18,94 @@ class SSHService {
     required Uint8List? reqFile,
     required String botName,
   }) async {
-    final client = await connect(server);
-    final sftp = await client.sftp();
+    // اكتب الملفات مؤقتاً
+    final botPath = await _writeTempFile(botFile, botFileName);
+    String? reqPath;
+    if (reqFile != null) {
+      reqPath = await _writeTempFile(reqFile, 'requirements.txt');
+    }
 
-    // إنشاء مجلد البوت
-    await client.execute('mkdir -p /root/bots/$botName');
+    // إنشاء مجلد البوت على السيرفر
+    final mkdirResult = await Process.run('ssh', [
+      '-p', '${server.port}',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '${server.user}@${server.host}',
+      'mkdir -p /root/bots/$botName'
+    ]);
 
-    // رفع ملف البوت — نحول Uint8List لـ Stream
-    final botRemote = await sftp.open(
-      '/root/bots/$botName/$botFileName',
-      mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
-    );
-    await botRemote.write(Stream.fromIterable([botFile]));
-    await botRemote.close();
+    if (mkdirResult.exitCode != 0) {
+      throw Exception('فشل إنشاء المجلد: ${mkdirResult.stderr}');
+    }
+
+    // رفع ملف البوت
+    final scpBotResult = await Process.run('scp', [
+      '-P', '${server.port}',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      botPath,
+      '${server.user}@${server.host}:/root/bots/$botName/$botFileName'
+    ]);
+
+    if (scpBotResult.exitCode != 0) {
+      throw Exception('فشل رفع bot.py: ${scpBotResult.stderr}');
+    }
 
     // رفع requirements لو موجود
-    if (reqFile != null) {
-      final reqRemote = await sftp.open(
-        '/root/bots/$botName/requirements.txt',
-        mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
-      );
-      await reqRemote.write(Stream.fromIterable([reqFile]));
-      await reqRemote.close();
+    if (reqPath != null) {
+      final scpReqResult = await Process.run('scp', [
+        '-P', '${server.port}',
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        reqPath,
+        '${server.user}@${server.host}:/root/bots/$botName/requirements.txt'
+      ]);
+
+      if (scpReqResult.exitCode != 0) {
+        throw Exception('فشل رفع requirements.txt: ${scpReqResult.stderr}');
+      }
     }
 
     // تثبيت المتطلبات
-    final installSession = await client.execute('cd /root/bots/$botName && pip install -r requirements.txt 2>&1 || echo "NO_REQ"');
-    final installOutput = await installSession.stdout.join();
-    await installSession.done;
+    final installResult = await Process.run('ssh', [
+      '-p', '${server.port}',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '${server.user}@${server.host}',
+      'cd /root/bots/$botName && pip3 install -r requirements.txt 2>&1 || python3 -m pip install -r requirements.txt 2>&1 || echo "NO_REQ"'
+    ]);
 
-    // تشغيل البوت في background
-    final runSession = await client.execute('cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!');
-    final runOutput = await runSession.stdout.join();
-    await runSession.done;
+    // تشغيل البوت
+    final runResult = await Process.run('ssh', [
+      '-p', '${server.port}',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '${server.user}@${server.host}',
+      'cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
+    ]);
 
-    final pid = runOutput.trim();
+    final pid = (runResult.stdout as String).trim();
 
-    client.close();
+    // امسح الملفات المؤقتة
+    await File(botPath).delete();
+    if (reqPath != null) await File(reqPath).delete();
 
-    if (pid.isEmpty || pid == '') {
+    if (pid.isEmpty) {
       throw Exception('فشل في تشغيل البوت');
     }
 
-    return '✅ البوت شغال!\nPID: $pid\nServer: ${server.name}\nInstall: ${installOutput.contains("NO_REQ") ? "No requirements" : "Done"}';
+    return '✅ البوت شغال!\nPID: $pid\nServer: ${server.name}';
   }
 
   static Future<String> getLogs(ServerModel server, String botName) async {
-    final client = await connect(server);
-    final session = await client.execute('cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet"');
-    final output = await session.stdout.join();
-    await session.done;
-    client.close();
-    return output;
+    final result = await Process.run('ssh', [
+      '-p', '${server.port}',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '${server.user}@${server.host}',
+      'cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet"'
+    ]);
+
+    return result.stdout as String;
   }
 }

@@ -35,6 +35,13 @@ jobs:
       - name: Create android folder
         run: flutter create --platforms android .
 
+      - name: Add Internet Permissions
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          # نضيف الصلاحيات قبل </manifest>
+          sed -i 's|</manifest>|<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n</manifest>|' $MANIFEST
+          cat $MANIFEST
+
       - name: Pub get
         run: flutter pub get
 
