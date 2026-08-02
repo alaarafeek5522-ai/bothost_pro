@@ -73,7 +73,7 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Icon(Icons.shield_lock, size: 80, color: Color(0xFF6C63FF)),
+              const Icon(Icons.security, size: 80, color: Color(0xFF6C63FF)),
               const SizedBox(height: 20),
               Text(
                 '🔐 تسجيل الدخول',

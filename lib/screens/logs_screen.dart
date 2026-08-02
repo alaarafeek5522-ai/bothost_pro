@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/ssh_service.dart';
+import '../services/auth_service.dart';
 
 class LogsScreen extends StatefulWidget {
   const LogsScreen({super.key});
@@ -18,13 +19,20 @@ class _LogsScreenState extends State<LogsScreen> {
     final provider = context.read<AppProvider>();
     if (provider.myBot == null || provider.servers.isEmpty) return;
 
+    final user = await AuthService.getCurrentUser();
+    if (user == null) return;
+
     setState(() => _isLoading = true);
 
     try {
       final server = provider.servers.firstWhere(
         (s) => s.name == provider.myBot!.serverName,
       );
-      final logs = await SSHService.getLogs(server, provider.myBot!.name);
+      final logs = await SSHService.getLogs(
+        server, 
+        provider.myBot!.name,
+        user.deviceId,
+      );
       provider.setLogs(logs);
       setState(() => _detailedLogs = logs);
     } catch (e) {
@@ -60,7 +68,6 @@ class _LogsScreenState extends State<LogsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Error Banner
                 if (provider.error != null)
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -83,8 +90,6 @@ class _LogsScreenState extends State<LogsScreen> {
                       ],
                     ),
                   ),
-
-                // Logs Terminal
                 Expanded(
                   child: Container(
                     padding: const EdgeInsets.all(12),
@@ -111,8 +116,6 @@ class _LogsScreenState extends State<LogsScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-
-                // Action Buttons
                 Row(
                   children: [
                     Expanded(
