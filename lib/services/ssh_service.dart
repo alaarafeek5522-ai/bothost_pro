@@ -167,10 +167,25 @@ class SSHService {
     try {
       final botDir = '/root/bots/user_$userId/$botName';
       
-      // نوقف كل process في المجلد
       final result = await client.execute('''
-        pkill -f "$botDir" 2>/dev/null || true
+        echo "=== STOPPING BOT ==="
+        
+        # اقتل بالمسار
+        pkill -9 -f "$botDir" 2>/dev/null || true
+        
+        # استنى
+        sleep 2
+        
+        # لو لسه شغال، اقتل بـ PID
+        for pid in $(ps aux | grep "$botDir" | grep -v grep | awk '{print $2}'); do
+          echo "Killing PID: $pid"
+          kill -9 $pid 2>/dev/null || true
+        done
+        
+        # استنى تاني
         sleep 1
+        
+        # تأكد إنه مات
         ps aux | grep "$botDir" | grep -v grep || echo "STOPPED"
       ''');
       
@@ -183,21 +198,30 @@ class SSHService {
     }
   }
 
-  // ========== حذف البوت من السيرفر ==========
+  // ========== حذف نهائي من السيرفر ==========
   static Future<bool> deleteBotFromServer(ServerModel server, String botName, String userId) async {
-    // أولاً: نوقف البوت
+    // ========== الخطوة 1: اقتل الـ process ==========
     await stopBot(server, botName, userId);
     
+    // ========== الخطوة 2: امسح الملفات ==========
     final client = await _connect(server);
     try {
       final botDir = '/root/bots/user_$userId/$botName';
       
-      // نحذف المجلد
-      final result = await client.execute('rm -rf $botDir && echo "DELETED" || echo "FAILED"');
+      final result = await client.execute('''
+        echo "=== DELETING FILES ==="
+        
+        # امسح المجلد
+        rm -rf $botDir 2>/dev/null && echo "DELETED" || echo "RM_FAILED"
+        
+        # تأكد
+        ls -la $botDir 2>/dev/null || echo "DIR_GONE"
+      ''');
+      
       final output = await _readStream(result.stdout);
       await result.done;
       
-      return output.contains('DELETED');
+      return output.contains('DELETED') || output.contains('DIR_GONE');
     } finally {
       client.close();
     }
@@ -226,7 +250,6 @@ class SSHService {
   }
 
   static Future<String> restartBot(ServerModel server, String botName, String botFileName, String userId) async {
-    // نوقف القديم
     await stopBot(server, botName, userId);
     await Future.delayed(const Duration(seconds: 2));
     

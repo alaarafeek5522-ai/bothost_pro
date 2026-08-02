@@ -22,7 +22,7 @@ class BotHostPro extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => AppProvider(),
       child: MaterialApp(
-        title: 'BotHost Pro',
+        title: '𝘽𝙤𝙩𝙃𝙤𝙨𝙩_𝙋𝙧𝙤',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
         home: const SplashScreen(),
@@ -48,7 +48,6 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _initApp() async {
     await Future.delayed(const Duration(seconds: 2));
 
-    // تحقق من التحديثات
     if (await UpdateService.shouldShowUpdate()) {
       final update = await UpdateService.checkUpdate();
       if (update != null && mounted) {
@@ -56,17 +55,9 @@ class _SplashScreenState extends State<SplashScreen> {
           _showStoppedDialog(update['stop_message']);
           return;
         }
-        if (update['force_update'] == true) {
-          _showUpdateDialog(update['update_message'], update['download_url']);
-          return;
-        }
       }
     }
 
-    // تحقق من VPN
-    // VPNService.showVPNDialog(context); // فعلها لو عايز
-
-    // تحقق من تسجيل الدخول
     final user = await AuthService.getCurrentUser();
     
     if (mounted) {
@@ -96,30 +87,6 @@ class _SplashScreenState extends State<SplashScreen> {
     );
   }
 
-  void _showUpdateDialog(String message, String url) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('🚀 تحديث جديد'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('لاحقاً'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              // افتح الرابط
-              Navigator.pop(ctx);
-            },
-            child: const Text('تحديث الآن'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -130,7 +97,7 @@ class _SplashScreenState extends State<SplashScreen> {
             const Icon(Icons.rocket_launch, size: 100, color: Color(0xFF6C63FF)),
             const SizedBox(height: 20),
             Text(
-              'BotHost Pro',
+              '𝘽𝙤𝙩𝙃𝙤𝙨𝙩_𝙋𝙧𝙤',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                     color: const Color(0xFF6C63FF),
