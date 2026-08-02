@@ -3,6 +3,7 @@ class UserModel {
   final String email;
   final String password;
   final String deviceId;
+  final bool hasBot;
   final DateTime createdAt;
 
   UserModel({
@@ -10,6 +11,7 @@ class UserModel {
     required this.email,
     required this.password,
     required this.deviceId,
+    this.hasBot = false,
     required this.createdAt,
   });
 
@@ -19,6 +21,7 @@ class UserModel {
       email: json['email'],
       password: json['password'] ?? '',
       deviceId: json['deviceId'],
+      hasBot: json['hasBot'] ?? false,
       createdAt: DateTime.parse(json['createdAt']),
     );
   }
@@ -29,6 +32,7 @@ class UserModel {
       'email': email,
       'password': password,
       'deviceId': deviceId,
+      'hasBot': hasBot,
       'createdAt': createdAt.toIso8601String(),
     };
   }

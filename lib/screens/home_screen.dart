@@ -1,13 +1,12 @@
-
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../providers/app_provider.dart';
 import '../services/server_service.dart';
 import '../services/ssh_service.dart';
 import '../services/auth_service.dart';
+import '../services/telegram_service.dart';
 import '../services/update_service.dart';
 import '../models/bot_model.dart';
 import 'logs_screen.dart';
@@ -29,6 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _deployStatus = '';
   List<String> _deploySteps = [];
   String? _userEmail;
+  bool _hasBot = false;
 
   @override
   void initState() {
@@ -41,7 +41,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadUser() async {
     final user = await AuthService.getCurrentUser();
     if (user != null) {
-      setState(() => _userEmail = user.email);
+      setState(() {
+        _userEmail = user.email;
+        _hasBot = user.hasBot;
+      });
     }
   }
 
@@ -139,6 +142,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _deployBot() async {
+    // ========== التحقق 1: ملف البوت ==========
     if (_botFile == null || _botNameController.text.isEmpty) {
       _showStep('❌ اختار ملف البوت واكتب الاسم');
       return;
@@ -146,14 +150,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final botName = _botNameController.text.trim();
 
+    // ========== التحقق 2: اسم صالح ==========
     if (!_isValidBotName(botName)) {
       _showStep('❌ اسم البوت لازم يكون إنجليزي فقط (a-z, 0-9, -, _)');
       return;
     }
 
+    // ========== التحقق 3: المستخدم مسجل ==========
     final user = await AuthService.getCurrentUser();
     if (user == null) {
       _showStep('❌ لازم تسجل دخول الأول');
+      return;
+    }
+
+    // ========== التحقق 4: بوت واحد فقط! ==========
+    if (await AuthService.currentUserHasBot() || _hasBot) {
+      _showStep('❌ عندك بوت شغال بالفعل!\nكل حساب = بوت واحد فقط');
       return;
     }
 
@@ -188,6 +200,10 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       final finalStatus = steps['run'] ?? '✅ تم التشغيل';
+      
+      // ========== نحدث الحالة: عندك بوت ==========
+      await AuthService.setBotStatus(true);
+      setState(() => _hasBot = true);
       
       provider.setBot(BotModel(
         name: botName,
@@ -254,7 +270,11 @@ class _HomeScreenState extends State<HomeScreen> {
             Text('⚠️ تأكيد الحذف'),
           ],
         ),
-        content: const Text('هل أنت متأكد من حذف البوت؟\nالحذف نهائي!'),
+        content: const Text(
+          'هل أنت متأكد من حذف البوت؟\n\n'
+          'الحذف نهائي!\n'
+          'هتقدم ترفع بوت تاني بعد الحذف.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -263,7 +283,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE94560)),
-            child: const Text('حذف'),
+            child: const Text('حذف نهائي'),
           ),
         ],
       ),
@@ -280,20 +300,22 @@ class _HomeScreenState extends State<HomeScreen> {
         (s) => s.name == provider.myBot!.serverName,
       );
       await SSHService.deleteBot(server, provider.myBot!.name, user.deviceId);
+      
+      // ========== نحدث الحالة: مفيش بوت ==========
+      await AuthService.setBotStatus(false);
+      setState(() => _hasBot = false);
+      
       await provider.clearSavedBot();
-      _showStep('🗑️ تم حذف البوت نهائياً');
+      _showStep('🗑️ تم حذف البوت نهائياً\nتقدم ترفع بوت جديد!');
     } catch (e) {
       _showStep('❌ فشل الحذف: $e');
     }
   }
 
   Future<void> _openTelegram() async {
-    const url = 'https://t.me/ahrgq';
-    final uri = Uri.parse(url);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      _showStep('❌ مقدرش أفتح التليجرام');
+    final success = await TelegramService.openChannel();
+    if (!success) {
+      _showStep('❌ مقدرش أفتح التليجرام\nجرب تفتحه يدوياً: @ahrgq');
     }
   }
 
@@ -336,13 +358,11 @@ class _HomeScreenState extends State<HomeScreen> {
             title: const Text('🤖 BotHost Pro'),
             centerTitle: true,
             actions: [
-              // زر الدعم
               IconButton(
                 icon: const Icon(Icons.support_agent),
                 tooltip: 'الدعم',
                 onPressed: _openTelegram,
               ),
-              // زر الخروج
               IconButton(
                 icon: const Icon(Icons.logout),
                 tooltip: 'خروج',
@@ -412,67 +432,95 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 25),
 
-                  // Bot Name
-                  TextField(
-                    controller: _botNameController,
-                    decoration: InputDecoration(
-                      labelText: 'اسم البوت (إنجليزي فقط)',
-                      hintText: 'مثال: my_bot, bot123, test-bot',
-                      prefixIcon: const Icon(Icons.smart_toy),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      filled: true,
-                      fillColor: const Color(0xFF16213E),
-                      helperText: 'a-z, 0-9, -, _ فقط',
-                      helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+                  // ========== تحذير: بوت واحد فقط ==========
+                  if (_hasBot || provider.myBot != null)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(bottom: 15),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFA726).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFFFA726)),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.info, color: Color(0xFFFFA726)),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              '⚠️ عندك بوت شغال بالفعل!\nلو عايز بوت جديد، احذف القديم الأول.',
+                              style: TextStyle(color: Color(0xFFFFA726), fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 15),
+
+                  // Bot Name
+                  if (!_hasBot && provider.myBot == null)
+                    TextField(
+                      controller: _botNameController,
+                      decoration: InputDecoration(
+                        labelText: 'اسم البوت (إنجليزي فقط)',
+                        hintText: 'مثال: my_bot, bot123, test-bot',
+                        prefixIcon: const Icon(Icons.smart_toy),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        filled: true,
+                        fillColor: const Color(0xFF16213E),
+                        helperText: 'a-z, 0-9, -, _ فقط',
+                        helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+                      ),
+                    ),
+                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 15),
 
                   // Bot File
-                  _buildFileCard(
-                    icon: Icons.code,
-                    label: 'ملف البوت (bot.py)',
-                    fileName: _botFileName,
-                    onTap: _pickBotFile,
-                    isRequired: true,
-                  ),
-                  const SizedBox(height: 10),
+                  if (!_hasBot && provider.myBot == null)
+                    _buildFileCard(
+                      icon: Icons.code,
+                      label: 'ملف البوت (bot.py)',
+                      fileName: _botFileName,
+                      onTap: _pickBotFile,
+                      isRequired: true,
+                    ),
+                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 10),
 
                   // Requirements File
-                  _buildFileCard(
-                    icon: Icons.list_alt,
-                    label: 'ملف المتطلبات (requirements.txt)',
-                    fileName: _reqFileName,
-                    onTap: _pickReqFile,
-                    isRequired: false,
-                  ),
-                  const SizedBox(height: 20),
+                  if (!_hasBot && provider.myBot == null)
+                    _buildFileCard(
+                      icon: Icons.list_alt,
+                      label: 'ملف المتطلبات (requirements.txt)',
+                      fileName: _reqFileName,
+                      onTap: _pickReqFile,
+                      isRequired: false,
+                    ),
+                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 20),
 
                   // Deploy Button
-                  SizedBox(
-                    height: 55,
-                    child: ElevatedButton.icon(
-                      onPressed: provider.isLoading ? null : _deployBot,
-                      icon: provider.isLoading
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Icon(Icons.rocket_launch),
-                      label: Text(
-                        provider.isLoading ? 'جاري التشغيل...' : '🚀 شغل البوت',
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6C63FF),
-                        foregroundColor: Colors.white,
-                        elevation: 8,
-                        shadowColor: const Color(0xFF6C63FF).withOpacity(0.5),
+                  if (!_hasBot && provider.myBot == null)
+                    SizedBox(
+                      height: 55,
+                      child: ElevatedButton.icon(
+                        onPressed: provider.isLoading ? null : _deployBot,
+                        icon: provider.isLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.rocket_launch),
+                        label: Text(
+                          provider.isLoading ? 'جاري التشغيل...' : '🚀 شغل البوت',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6C63FF),
+                          foregroundColor: Colors.white,
+                          elevation: 8,
+                          shadowColor: const Color(0xFF6C63FF).withOpacity(0.5),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 15),
+                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 15),
 
                   // Progress Steps
                   if (_deploySteps.isNotEmpty) ...[
@@ -546,7 +594,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
 
                   // My Bot Status
-                  if (provider.myBot != null) ...[
+                  if (provider.myBot != null || _hasBot) ...[
                     Container(
                       padding: const EdgeInsets.all(15),
                       decoration: BoxDecoration(
@@ -578,10 +626,12 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                           const Divider(color: Colors.white24, height: 20),
-                          _buildInfoRow('الاسم:', provider.myBot!.name),
-                          _buildInfoRow('السيرفر:', provider.myBot!.serverName),
-                          _buildInfoRow('الحالة:', provider.myBot!.status),
-                          _buildInfoRow('التاريخ:', provider.myBot!.createdAt.toString().substring(0, 16)),
+                          if (provider.myBot != null) ...[
+                            _buildInfoRow('الاسم:', provider.myBot!.name),
+                            _buildInfoRow('السيرفر:', provider.myBot!.serverName),
+                            _buildInfoRow('الحالة:', provider.myBot!.status),
+                            _buildInfoRow('التاريخ:', provider.myBot!.createdAt.toString().substring(0, 16)),
+                          ],
                           const SizedBox(height: 15),
                           Row(
                             children: [
@@ -728,6 +778,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     const Text('استضافة البوتات بضغطة زر'),
                     const SizedBox(height: 10),
                     const Text('📢 قناة التليجرام: @ahrgq'),
+                    const SizedBox(height: 5),
+                    const Text('🔒 كل حساب = بوت واحد'),
+                    const SizedBox(height: 5),
+                    const Text('📱 جهاز واحد = حساب واحد'),
                   ],
                 );
               },
