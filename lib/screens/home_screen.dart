@@ -1,12 +1,17 @@
+
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../providers/app_provider.dart';
 import '../services/server_service.dart';
 import '../services/ssh_service.dart';
+import '../services/auth_service.dart';
+import '../services/update_service.dart';
 import '../models/bot_model.dart';
 import 'logs_screen.dart';
+import 'login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,11 +28,21 @@ class _HomeScreenState extends State<HomeScreen> {
   final _botNameController = TextEditingController();
   String _deployStatus = '';
   List<String> _deploySteps = [];
+  String? _userEmail;
 
   @override
   void initState() {
     super.initState();
+    _loadUser();
     _loadServers();
+    _checkUpdate();
+  }
+
+  Future<void> _loadUser() async {
+    final user = await AuthService.getCurrentUser();
+    if (user != null) {
+      setState(() => _userEmail = user.email);
+    }
   }
 
   Future<void> _loadServers() async {
@@ -41,6 +56,35 @@ class _HomeScreenState extends State<HomeScreen> {
       provider.setError('فشل في جلب السيرفرات: $e');
     }
     provider.setLoading(false);
+  }
+
+  Future<void> _checkUpdate() async {
+    if (await UpdateService.shouldShowUpdate()) {
+      final update = await UpdateService.checkUpdate();
+      if (update != null && mounted) {
+        if (update['stopped'] == true) {
+          _showStoppedDialog(update['stop_message']);
+          return;
+        }
+      }
+    }
+  }
+
+  void _showStoppedDialog(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('⛔ التطبيق متوقف'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('خروج'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickBotFile() async {
@@ -107,6 +151,12 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    final user = await AuthService.getCurrentUser();
+    if (user == null) {
+      _showStep('❌ لازم تسجل دخول الأول');
+      return;
+    }
+
     final provider = context.read<AppProvider>();
     provider.setLoading(true);
     provider.clearError();
@@ -130,6 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
         botFileName: _botFileName,
         reqFile: _reqFile,
         botName: botName,
+        userId: user.deviceId,
       );
 
       for (final entry in steps.entries) {
@@ -161,6 +212,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final provider = context.read<AppProvider>();
     if (provider.myBot == null || provider.servers.isEmpty) return;
 
+    final user = await AuthService.getCurrentUser();
+    if (user == null) return;
+
     provider.setLoading(true);
     _showStep('🔄 جاري إعادة تشغيل البوت...');
 
@@ -171,7 +225,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final pid = await SSHService.restartBot(
         server, 
         provider.myBot!.name,
-        'bot.py'
+        'bot.py',
+        user.deviceId,
       );
       _showStep('✅ تم إعادة التشغيل! PID: $pid');
       
@@ -192,11 +247,24 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('⚠️ تأكيد الحذف'),
-        content: const Text('هل أنت متأكد من حذف البوت؟'),
+        title: const Row(
+          children: [
+            Icon(Icons.warning, color: Color(0xFFE94560)),
+            SizedBox(width: 10),
+            Text('⚠️ تأكيد الحذف'),
+          ],
+        ),
+        content: const Text('هل أنت متأكد من حذف البوت؟\nالحذف نهائي!'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('حذف', style: TextStyle(color: Colors.red))),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFE94560)),
+            child: const Text('حذف'),
+          ),
         ],
       ),
     );
@@ -204,8 +272,59 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirm != true) return;
 
     final provider = context.read<AppProvider>();
-    await provider.clearSavedBot();
-    _showStep('🗑️ تم حذف البوت');
+    final user = await AuthService.getCurrentUser();
+    if (user == null || provider.myBot == null) return;
+
+    try {
+      final server = provider.servers.firstWhere(
+        (s) => s.name == provider.myBot!.serverName,
+      );
+      await SSHService.deleteBot(server, provider.myBot!.name, user.deviceId);
+      await provider.clearSavedBot();
+      _showStep('🗑️ تم حذف البوت نهائياً');
+    } catch (e) {
+      _showStep('❌ فشل الحذف: $e');
+    }
+  }
+
+  Future<void> _openTelegram() async {
+    const url = 'https://t.me/ahrgq';
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      _showStep('❌ مقدرش أفتح التليجرام');
+    }
+  }
+
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('🚪 تسجيل خروج'),
+        content: const Text('متأكد إنك عايز تخرج؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('خروج', style: TextStyle(color: Color(0xFFE94560))),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    await AuthService.logout();
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    }
   }
 
   @override
@@ -213,6 +332,25 @@ class _HomeScreenState extends State<HomeScreen> {
     return Consumer<AppProvider>(
       builder: (context, provider, child) {
         return Scaffold(
+          appBar: AppBar(
+            title: const Text('🤖 BotHost Pro'),
+            centerTitle: true,
+            actions: [
+              // زر الدعم
+              IconButton(
+                icon: const Icon(Icons.support_agent),
+                tooltip: 'الدعم',
+                onPressed: _openTelegram,
+              ),
+              // زر الخروج
+              IconButton(
+                icon: const Icon(Icons.logout),
+                tooltip: 'خروج',
+                onPressed: _logout,
+              ),
+            ],
+          ),
+          drawer: _buildDrawer(),
           body: SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -225,15 +363,24 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
                         colors: [Color(0xFF6C63FF), Color(0xFF00BFA6)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF6C63FF).withOpacity(0.3),
+                          blurRadius: 20,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
                     ),
                     child: Column(
                       children: [
                         const Icon(Icons.rocket_launch, size: 50, color: Colors.white),
                         const SizedBox(height: 10),
                         Text(
-                          '🤖 BotHost Pro',
+                          'BotHost Pro',
                           style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -246,6 +393,20 @@ class _HomeScreenState extends State<HomeScreen> {
                                 color: Colors.white70,
                               ),
                         ),
+                        if (_userEmail != null) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '👤 $_userEmail',
+                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -303,6 +464,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         provider.isLoading ? 'جاري التشغيل...' : '🚀 شغل البوت',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6C63FF),
+                        foregroundColor: Colors.white,
+                        elevation: 8,
+                        shadowColor: const Color(0xFF6C63FF).withOpacity(0.5),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 15),
@@ -314,33 +481,43 @@ class _HomeScreenState extends State<HomeScreen> {
                       decoration: BoxDecoration(
                         color: const Color(0xFF16213E),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFF6C63FF)),
+                        border: Border.all(color: const Color(0xFF6C63FF).withOpacity(0.5)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            '📋 خطوات التشغيل:',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF6C63FF),
-                            ),
+                          const Row(
+                            children: [
+                              Icon(Icons.list_alt, color: Color(0xFF6C63FF), size: 18),
+                              SizedBox(width: 8),
+                              Text(
+                                'خطوات التشغيل:',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF6C63FF),
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 10),
                           ..._deploySteps.map((step) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            padding: const EdgeInsets.symmetric(vertical: 3),
                             child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Icon(
                                   step.startsWith('❌') 
                                       ? Icons.error 
                                       : step.startsWith('✅')
                                           ? Icons.check_circle
-                                          : Icons.pending,
+                                          : step.startsWith('🎯')
+                                              ? Icons.location_on
+                                              : Icons.pending,
                                   size: 16,
                                   color: step.startsWith('❌') 
                                       ? const Color(0xFFE94560) 
-                                      : step.startsWith('✅')
+                                      : step.startsWith('✅') || step.startsWith('🎯')
                                           ? const Color(0xFF00BFA6)
                                           : Colors.white70,
                                 ),
@@ -350,9 +527,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                     step,
                                     style: TextStyle(
                                       fontSize: 12,
+                                      height: 1.4,
                                       color: step.startsWith('❌') 
                                           ? const Color(0xFFE94560) 
-                                          : step.startsWith('✅')
+                                          : step.startsWith('✅') || step.startsWith('🎯')
                                               ? const Color(0xFF00BFA6)
                                               : Colors.white70,
                                     ),
@@ -375,6 +553,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: const Color(0xFF16213E),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: const Color(0xFF00BFA6)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF00BFA6).withOpacity(0.1),
+                            blurRadius: 10,
+                            offset: const Offset(0, 5),
+                          ),
+                        ],
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -384,7 +569,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               const Icon(Icons.check_circle, color: Color(0xFF00BFA6)),
                               const SizedBox(width: 8),
                               Text(
-                                'بوتك شغال!',
+                                'بوتك شغال! 🎉',
                                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                                       color: const Color(0xFF00BFA6),
                                       fontWeight: FontWeight.bold,
@@ -392,12 +577,12 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          Text('الاسم: ${provider.myBot!.name}'),
-                          Text('السيرفر: ${provider.myBot!.serverName}'),
-                          Text('الحالة: ${provider.myBot!.status}'),
-                          Text('تاريخ الإنشاء: ${provider.myBot!.createdAt.toString().substring(0, 16)}'),
-                          const SizedBox(height: 10),
+                          const Divider(color: Colors.white24, height: 20),
+                          _buildInfoRow('الاسم:', provider.myBot!.name),
+                          _buildInfoRow('السيرفر:', provider.myBot!.serverName),
+                          _buildInfoRow('الحالة:', provider.myBot!.status),
+                          _buildInfoRow('التاريخ:', provider.myBot!.createdAt.toString().substring(0, 16)),
+                          const SizedBox(height: 15),
                           Row(
                             children: [
                               Expanded(
@@ -407,11 +592,11 @@ class _HomeScreenState extends State<HomeScreen> {
                                   label: const Text('إعادة تشغيل'),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF00BFA6),
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 10),
                               Expanded(
                                 child: OutlinedButton.icon(
                                   onPressed: _deleteBot,
@@ -419,7 +604,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   label: const Text('حذف', style: TextStyle(color: Color(0xFFE94560))),
                                   style: OutlinedButton.styleFrom(
                                     side: const BorderSide(color: Color(0xFFE94560)),
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
                                   ),
                                 ),
                               ),
@@ -435,7 +620,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         MaterialPageRoute(builder: (_) => const LogsScreen()),
                       ),
                       icon: const Icon(Icons.terminal),
-                      label: const Text('عرض السجلات'),
+                      label: const Text('📋 عرض السجلات'),
                     ),
                   ],
 
@@ -458,6 +643,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             '${provider.servers.length} سيرفر متاح',
                             style: const TextStyle(color: Colors.white70),
                           ),
+                          const SizedBox(width: 15),
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF00BFA6),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -467,6 +661,111 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildDrawer() {
+    return Drawer(
+      child: Container(
+        color: const Color(0xFF1A1A2E),
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            DrawerHeader(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF6C63FF), Color(0xFF00BFA6)],
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.rocket_launch, size: 50, color: Colors.white),
+                  const SizedBox(height: 10),
+                  Text(
+                    'BotHost Pro',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  if (_userEmail != null)
+                    Text(
+                      _userEmail!,
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.support_agent, color: Color(0xFF6C63FF)),
+              title: const Text('الدعم والمساعدة'),
+              onTap: () {
+                Navigator.pop(context);
+                _openTelegram();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.telegram, color: Color(0xFF00BFA6)),
+              title: const Text('قناة التليجرام'),
+              onTap: () {
+                Navigator.pop(context);
+                _openTelegram();
+              },
+            ),
+            const Divider(color: Colors.white24),
+            ListTile(
+              leading: const Icon(Icons.info, color: Colors.white70),
+              title: const Text('عن التطبيق'),
+              onTap: () {
+                Navigator.pop(context);
+                showAboutDialog(
+                  context: context,
+                  applicationName: 'BotHost Pro',
+                  applicationVersion: '1.0.0',
+                  applicationIcon: const Icon(Icons.rocket_launch, color: Color(0xFF6C63FF)),
+                  children: [
+                    const Text('استضافة البوتات بضغطة زر'),
+                    const SizedBox(height: 10),
+                    const Text('📢 قناة التليجرام: @ahrgq'),
+                  ],
+                );
+              },
+            ),
+            const Divider(color: Colors.white24),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Color(0xFFE94560)),
+              title: const Text('تسجيل خروج', style: TextStyle(color: Color(0xFFE94560))),
+              onTap: () {
+                Navigator.pop(context);
+                _logout();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -500,7 +799,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   Text(
                     label,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 12,
                     ),

@@ -23,12 +23,36 @@ class SSHService {
     return utf8.decode(bytes);
   }
 
+  // تثبيت pip تلقائياً
+  static Future<void> _ensurePip(SSHClient client) async {
+    final check = await client.execute('which pip3 2>/dev/null || which pip 2>/dev/null || echo "NO_PIP"');
+    final output = await _readStream(check.stdout);
+    await check.done;
+
+    if (!output.contains('NO_PIP')) return;
+
+    // نحاول ننزل pip
+    final installPip = await client.execute('''
+      (curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py 2>/dev/null && python3 /tmp/get-pip.py 2>/dev/null && echo "PIP_OK") ||
+      (apt-get update -qq && apt-get install -y -qq python3-pip 2>/dev/null && echo "PIP_OK") ||
+      (python3 -m ensurepip --upgrade 2>/dev/null && echo "PIP_OK") ||
+      echo "PIP_FAILED"
+    ''');
+    final installOutput = await _readStream(installPip.stdout);
+    await installPip.done;
+
+    if (installOutput.contains('PIP_FAILED')) {
+      throw Exception('❌ مقدرش أنزل pip على السيرفر - جرب تثبيته يدوياً');
+    }
+  }
+
   static Future<Map<String, String>> deployBot({
     required ServerModel server,
     required Uint8List botFile,
     required String botFileName,
     required Uint8List? reqFile,
     required String botName,
+    required String userId, // device_id أو user_id
   }) async {
     final steps = <String, String>{};
 
@@ -44,28 +68,37 @@ class SSHService {
     }
 
     try {
+      // Step 2: تثبيت pip
+      steps['pip'] = '🔄 جاري التأكد من pip...';
+      await _ensurePip(client);
+      steps['pip'] = '✅ pip جاهز';
+
       final sftp = await client.sftp();
 
-      // Step 2: إنشاء المجلد
-      steps['mkdir'] = '🔄 جاري إنشاء مجلد البوت...';
-      await client.execute('mkdir -p /root/bots/$botName');
-      steps['mkdir'] = '✅ تم إنشاء مجلد البوت';
+      // مجلد خاص بالمستخدم — حماية!
+      final userDir = '/root/bots/user_$userId';
+      final botDir = '$userDir/$botName';
 
-      // Step 3: رفع bot.py
+      // Step 3: إنشاء المجلدات
+      steps['mkdir'] = '🔄 جاري إنشاء مجلد البوت...';
+      await client.execute('mkdir -p $botDir && chmod 700 $userDir');
+      steps['mkdir'] = '✅ تم إنشاء مجلد البوت (محمي)';
+
+      // Step 4: رفع bot.py
       steps['upload_bot'] = '🔄 جاري رفع bot.py...';
       final botRemote = await sftp.open(
-        '/root/bots/$botName/$botFileName',
+        '$botDir/$botFileName',
         mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
       );
       await botRemote.writeBytes(botFile);
       await botRemote.close();
       steps['upload_bot'] = '✅ تم رفع bot.py';
 
-      // Step 4: رفع requirements
+      // Step 5: رفع requirements
       if (reqFile != null) {
         steps['upload_req'] = '🔄 جاري رفع requirements.txt...';
         final reqRemote = await sftp.open(
-          '/root/bots/$botName/requirements.txt',
+          '$botDir/requirements.txt',
           mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
         );
         await reqRemote.writeBytes(reqFile);
@@ -75,15 +108,13 @@ class SSHService {
         steps['upload_req'] = '⏭️ مفيش requirements.txt';
       }
 
-      // Step 5: تثبيت المتطلبات (محسّن)
+      // Step 6: تثبيت المتطلبات
       steps['install'] = '🔄 جاري تثبيت المتطلبات...';
       
-      // نجرب pip3 أولاً، بعدين python3 -m pip
       final installCmd = '''
-        cd /root/bots/$botName && 
-        (pip3 install -r requirements.txt 2>&1 && echo "===INSTALL_OK===") || 
+        cd $botDir && 
+        pip3 install -r requirements.txt 2>&1 && echo "===INSTALL_OK===" || 
         (python3 -m pip install -r requirements.txt 2>&1 && echo "===INSTALL_OK===") || 
-        (pip install -r requirements.txt 2>&1 && echo "===INSTALL_OK===") || 
         echo "===INSTALL_FAILED==="
       ''';
       
@@ -92,7 +123,6 @@ class SSHService {
       final installError = await _readStream(installResult.stderr);
       await installResult.done;
 
-      // نحفظ اللوج كامل
       final fullInstallLog = 'STDOUT:\\n$installOutput\\n\\nSTDERR:\\n$installError';
       
       if (installOutput.contains('===INSTALL_OK===')) {
@@ -103,21 +133,22 @@ class SSHService {
         throw Exception('فشل تثبيت المتطلبات:\\n$fullInstallLog');
       }
 
-      // Step 6: تشغيل البوت
-      steps['run'] = '🔄 جاري تشغيل البوت...';
-      
-      // نتأكد إن telebot موجود
+      // Step 7: التحقق من telebot
+      steps['check'] = '🔄 جاري التحقق من المكتبات...';
       final checkResult = await client.execute('python3 -c "import telebot; print(\\\"OK\\\")" 2>&1 || echo "MODULE_MISSING"');
       final checkOutput = await _readStream(checkResult.stdout);
       await checkResult.done;
       
       if (checkOutput.contains('MODULE_MISSING')) {
-        steps['run'] = '❌ مكتبة telebot مش متوفرة بعد التثبيت';
+        steps['check'] = '❌ مكتبة telebot مش متوفرة';
         throw Exception('مكتبة telebot مش متوفرة - جرب تثبيت يدوي: pip3 install pyTelegramBotAPI');
       }
+      steps['check'] = '✅ المكتبات جاهزة';
 
+      // Step 8: تشغيل البوت
+      steps['run'] = '🔄 جاري تشغيل البوت...';
       final runResult = await client.execute(
-        'cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
+        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
       );
       final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
@@ -141,19 +172,19 @@ class SSHService {
     return steps;
   }
 
-  static Future<String> getLogs(ServerModel server, String botName) async {
+  static Future<String> getLogs(ServerModel server, String botName, String userId) async {
     final client = await _connect(server);
     try {
-      // نجيب bot.log + نتأكد إن البوت شغال
+      final botDir = '/root/bots/user_$userId/$botName';
       final result = await client.execute('''
         echo "=== BOT LOG ===" && 
-        cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet" &&
+        cat $botDir/bot.log 2>&1 || echo "No logs yet" &&
         echo "" &&
         echo "=== PROCESS STATUS ===" &&
-        ps aux | grep "$botName" | grep -v grep || echo "Bot process not found" &&
+        ps aux | grep "$botDir" | grep -v grep || echo "Bot process not found" &&
         echo "" &&
-        echo "=== PYTHON PACKAGES ===" &&
-        pip3 list 2>/dev/null | grep -i telebot || pip list 2>/dev/null | grep -i telebot || echo "telebot not in pip list"
+        echo "=== DISK USAGE ===" &&
+        du -sh $botDir 2>/dev/null || echo "N/A"
       ''');
       final output = await _readStream(result.stdout);
       await result.done;
@@ -163,20 +194,30 @@ class SSHService {
     }
   }
 
-  static Future<String> restartBot(ServerModel server, String botName, String botFileName) async {
+  static Future<String> restartBot(ServerModel server, String botName, String botFileName, String userId) async {
     final client = await _connect(server);
     try {
-      // نوقف البوت القديم
-      await client.execute('pkill -f "/root/bots/$botName/$botFileName" || true');
+      final botDir = '/root/bots/user_$userId/$botName';
+      await client.execute('pkill -f "$botDir/$botFileName" || true');
       await Future.delayed(const Duration(seconds: 1));
       
-      // نشغله تاني
       final result = await client.execute(
-        'cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
+        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
       );
       final output = await _readStream(result.stdout);
       await result.done;
       return output.trim();
+    } finally {
+      client.close();
+    }
+  }
+
+  static Future<void> deleteBot(ServerModel server, String botName, String userId) async {
+    final client = await _connect(server);
+    try {
+      final botDir = '/root/bots/user_$userId/$botName';
+      await client.execute('pkill -f "$botDir" || true');
+      await client.execute('rm -rf $botDir');
     } finally {
       client.close();
     }
