@@ -136,8 +136,9 @@ class SSHService {
       steps['check'] = '✅ المكتبات جاهزة';
 
       steps['run'] = '🔄 جاري تشغيل البوت...';
+      // ✅ استخدم r'' raw string عشان $! يبقى literal
       final runResult = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
+        r'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo $!'
       );
       final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
@@ -256,8 +257,9 @@ class SSHService {
     final client = await _connect(server);
     try {
       final botDir = '/root/bots/user_$userId/$botName';
+      // ✅ استخدم r'' raw string عشان $! يبقى literal
       final result = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
+        r'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo $!'
       );
       final output = await _readStream(result.stdout);
       await result.done;
