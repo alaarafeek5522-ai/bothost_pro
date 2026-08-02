@@ -21,6 +21,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Uint8List? _reqFile;
   String _reqFileName = '';
   final _botNameController = TextEditingController();
+  String _deployStatus = '';
+  List<String> _deploySteps = [];
 
   @override
   void initState() {
@@ -69,17 +71,37 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _showStep(String message) {
+    setState(() {
+      _deploySteps.add(message);
+      _deployStatus = message;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+        backgroundColor: message.startsWith('❌') 
+            ? const Color(0xFFE94560) 
+            : message.startsWith('✅')
+                ? const Color(0xFF00BFA6)
+                : const Color(0xFF6C63FF),
+      ),
+    );
+  }
+
   Future<void> _deployBot() async {
     if (_botFile == null || _botNameController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('❌ اختار ملف البوت واكتب الاسم')),
-      );
+      _showStep('❌ اختار ملف البوت واكتب الاسم');
       return;
     }
 
     final provider = context.read<AppProvider>();
     provider.setLoading(true);
     provider.clearError();
+    setState(() {
+      _deploySteps = [];
+      _deployStatus = 'جاري البدء...';
+    });
 
     try {
       final servers = provider.servers;
@@ -88,8 +110,9 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       final server = ServerService.getLeastLoadedServer(servers);
+      _showStep('🎯 تم اختيار السيرفر: ${server.name}');
 
-      final result = await SSHService.deployBot(
+      final steps = await SSHService.deployBot(
         server: server,
         botFile: _botFile!,
         botFileName: _botFileName,
@@ -97,17 +120,22 @@ class _HomeScreenState extends State<HomeScreen> {
         botName: _botNameController.text.trim(),
       );
 
+      // نظهر كل خطوة
+      for (final entry in steps.entries) {
+        _showStep(entry.value);
+      }
+
+      final finalStatus = steps['run'] ?? '✅ تم التشغيل';
+      
       provider.setBot(BotModel(
         name: _botNameController.text.trim(),
         serverName: server.name,
-        status: 'شغال ✅',
+        status: finalStatus,
         createdAt: DateTime.now(),
       ));
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result), duration: const Duration(seconds: 5)),
-      );
     } catch (e) {
+      _showStep('❌ فشل: $e');
       provider.setError(e.toString());
       Navigator.push(
         context,
@@ -214,6 +242,66 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 15),
+
+                  // Progress Steps
+                  if (_deploySteps.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(15),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF16213E),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF6C63FF)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            '📋 خطوات التشغيل:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF6C63FF),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          ..._deploySteps.map((step) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  step.startsWith('❌') 
+                                      ? Icons.error 
+                                      : step.startsWith('✅')
+                                          ? Icons.check_circle
+                                          : Icons.pending,
+                                  size: 16,
+                                  color: step.startsWith('❌') 
+                                      ? const Color(0xFFE94560) 
+                                      : step.startsWith('✅')
+                                          ? const Color(0xFF00BFA6)
+                                          : Colors.white70,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    step,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: step.startsWith('❌') 
+                                          ? const Color(0xFFE94560) 
+                                          : step.startsWith('✅')
+                                              ? const Color(0xFF00BFA6)
+                                              : Colors.white70,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+                  ],
 
                   // My Bot Status
                   if (provider.myBot != null) ...[

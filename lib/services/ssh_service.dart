@@ -11,21 +11,36 @@ class SSHService {
     return path;
   }
 
-  static Future<String> deployBot({
+  static Future<Map<String, String>> deployBot({
     required ServerModel server,
     required Uint8List botFile,
     required String botFileName,
     required Uint8List? reqFile,
     required String botName,
   }) async {
-    // اكتب الملفات مؤقتاً
-    final botPath = await _writeTempFile(botFile, botFileName);
-    String? reqPath;
-    if (reqFile != null) {
-      reqPath = await _writeTempFile(reqFile, 'requirements.txt');
-    }
+    final steps = <String, String>{};
 
-    // إنشاء مجلد البوت على السيرفر
+    // Step 1: الاتصال بالسيرفر
+    steps['connect'] = 'جاري الاتصال بالسيرفر...';
+    
+    final testResult = await Process.run('ssh', [
+      '-p', '${server.port}',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'ConnectTimeout=10',
+      '${server.user}@${server.host}',
+      'echo "CONNECTED"'
+    ]);
+
+    if (testResult.exitCode != 0) {
+      steps['connect'] = '❌ فشل الاتصال: ${testResult.stderr}';
+      throw Exception(steps['connect']!);
+    }
+    steps['connect'] = '✅ تم الاتصال بالسيرفر';
+
+    // Step 2: إنشاء المجلد
+    steps['mkdir'] = 'جاري إنشاء مجلد البوت...';
+    
     final mkdirResult = await Process.run('ssh', [
       '-p', '${server.port}',
       '-o', 'StrictHostKeyChecking=no',
@@ -35,10 +50,23 @@ class SSHService {
     ]);
 
     if (mkdirResult.exitCode != 0) {
-      throw Exception('فشل إنشاء المجلد: ${mkdirResult.stderr}');
+      steps['mkdir'] = '❌ فشل إنشاء المجلد: ${mkdirResult.stderr}';
+      throw Exception(steps['mkdir']!);
     }
+    steps['mkdir'] = '✅ تم إنشاء مجلد البوت';
 
-    // رفع ملف البوت
+    // Step 3: كتابة الملفات مؤقتاً
+    steps['temp'] = 'جاري تحضير الملفات...';
+    final botPath = await _writeTempFile(botFile, botFileName);
+    String? reqPath;
+    if (reqFile != null) {
+      reqPath = await _writeTempFile(reqFile, 'requirements.txt');
+    }
+    steps['temp'] = '✅ تم تحضير الملفات';
+
+    // Step 4: رفع ملف البوت
+    steps['upload_bot'] = 'جاري رفع bot.py...';
+    
     final scpBotResult = await Process.run('scp', [
       '-P', '${server.port}',
       '-o', 'StrictHostKeyChecking=no',
@@ -48,11 +76,15 @@ class SSHService {
     ]);
 
     if (scpBotResult.exitCode != 0) {
-      throw Exception('فشل رفع bot.py: ${scpBotResult.stderr}');
+      steps['upload_bot'] = '❌ فشل رفع bot.py: ${scpBotResult.stderr}';
+      throw Exception(steps['upload_bot']!);
     }
+    steps['upload_bot'] = '✅ تم رفع bot.py';
 
-    // رفع requirements لو موجود
+    // Step 5: رفع requirements
     if (reqPath != null) {
+      steps['upload_req'] = 'جاري رفع requirements.txt...';
+      
       final scpReqResult = await Process.run('scp', [
         '-P', '${server.port}',
         '-o', 'StrictHostKeyChecking=no',
@@ -62,11 +94,17 @@ class SSHService {
       ]);
 
       if (scpReqResult.exitCode != 0) {
-        throw Exception('فشل رفع requirements.txt: ${scpReqResult.stderr}');
+        steps['upload_req'] = '❌ فشل رفع requirements.txt: ${scpReqResult.stderr}';
+        throw Exception(steps['upload_req']!);
       }
+      steps['upload_req'] = '✅ تم رفع requirements.txt';
+    } else {
+      steps['upload_req'] = '⏭️ مفيش requirements.txt';
     }
 
-    // تثبيت المتطلبات
+    // Step 6: تثبيت المتطلبات
+    steps['install'] = 'جاري تثبيت المتطلبات...';
+    
     final installResult = await Process.run('ssh', [
       '-p', '${server.port}',
       '-o', 'StrictHostKeyChecking=no',
@@ -75,7 +113,16 @@ class SSHService {
       'cd /root/bots/$botName && pip3 install -r requirements.txt 2>&1 || python3 -m pip install -r requirements.txt 2>&1 || echo "NO_REQ"'
     ]);
 
-    // تشغيل البوت
+    final installOutput = installResult.stdout as String;
+    if (installOutput.contains('ERROR') || installOutput.contains('Failed')) {
+      steps['install'] = '⚠️ تحذير في التثبيت: $installOutput';
+    } else {
+      steps['install'] = '✅ تم تثبيت المتطلبات';
+    }
+
+    // Step 7: تشغيل البوت
+    steps['run'] = 'جاري تشغيل البوت...';
+    
     final runResult = await Process.run('ssh', [
       '-p', '${server.port}',
       '-o', 'StrictHostKeyChecking=no',
@@ -90,11 +137,13 @@ class SSHService {
     await File(botPath).delete();
     if (reqPath != null) await File(reqPath).delete();
 
-    if (pid.isEmpty) {
-      throw Exception('فشل في تشغيل البوت');
+    if (pid.isEmpty || pid == '') {
+      steps['run'] = '❌ فشل تشغيل البوت';
+      throw Exception(steps['run']!);
     }
+    steps['run'] = '✅ البوت شغال! PID: $pid';
 
-    return '✅ البوت شغال!\nPID: $pid\nServer: ${server.name}';
+    return steps;
   }
 
   static Future<String> getLogs(ServerModel server, String botName) async {
