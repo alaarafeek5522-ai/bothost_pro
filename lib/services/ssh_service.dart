@@ -25,30 +25,37 @@ class SSHService {
     final sftp = await client.sftp();
 
     // إنشاء مجلد البوت
-    final botDir = '/root/bots/$botName';
-    await client.execute('mkdir -p $botDir');
+    await client.execute('mkdir -p /root/bots/$botName');
 
-    // رفع ملف البوت
-    final botRemote = await sftp.open('$botDir/$botFileName', mode: SftpFileOpenMode.create | SftpFileOpenMode.write);
-    await botRemote.write(botFile);
+    // رفع ملف البوت — نحول Uint8List لـ Stream
+    final botRemote = await sftp.open(
+      '/root/bots/$botName/$botFileName',
+      mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
+    );
+    await botRemote.write(Stream.fromIterable([botFile]));
     await botRemote.close();
 
     // رفع requirements لو موجود
     if (reqFile != null) {
-      final reqRemote = await sftp.open('$botDir/requirements.txt', mode: SftpFileOpenMode.create | SftpFileOpenMode.write);
-      await reqRemote.write(reqFile);
+      final reqRemote = await sftp.open(
+        '/root/bots/$botName/requirements.txt',
+        mode: SftpFileOpenMode.create | SftpFileOpenMode.write | SftpFileOpenMode.truncate,
+      );
+      await reqRemote.write(Stream.fromIterable([reqFile]));
       await reqRemote.close();
     }
 
     // تثبيت المتطلبات
-    final installResult = await client.execute('cd $botDir && pip install -r requirements.txt 2>&1 || echo "NO_REQ"');
-    final installOutput = await installResult.stdout.readBytes();
-    final installText = String.fromCharCodes(installOutput);
+    final installSession = await client.execute('cd /root/bots/$botName && pip install -r requirements.txt 2>&1 || echo "NO_REQ"');
+    final installOutput = await installSession.stdout.join();
+    await installSession.done;
 
     // تشغيل البوت في background
-    final runResult = await client.execute('cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \$!');
-    final runOutput = await runResult.stdout.readBytes();
-    final pid = String.fromCharCodes(runOutput).trim();
+    final runSession = await client.execute('cd /root/bots/$botName && nohup python3 $botFileName > bot.log 2>&1 & echo \$!');
+    final runOutput = await runSession.stdout.join();
+    await runSession.done;
+
+    final pid = runOutput.trim();
 
     client.close();
 
@@ -56,14 +63,15 @@ class SSHService {
       throw Exception('فشل في تشغيل البوت');
     }
 
-    return '✅ البوت شغال!\nPID: $pid\nServer: ${server.name}\nInstall: ${installText.contains("NO_REQ") ? "No requirements" : "Done"}';
+    return '✅ البوت شغال!\nPID: $pid\nServer: ${server.name}\nInstall: ${installOutput.contains("NO_REQ") ? "No requirements" : "Done"}';
   }
 
   static Future<String> getLogs(ServerModel server, String botName) async {
     final client = await connect(server);
-    final result = await client.execute('cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet"');
-    final output = await result.stdout.readBytes();
+    final session = await client.execute('cat /root/bots/$botName/bot.log 2>&1 || echo "No logs yet"');
+    final output = await session.stdout.join();
+    await session.done;
     client.close();
-    return String.fromCharCodes(output);
+    return output;
   }
 }
