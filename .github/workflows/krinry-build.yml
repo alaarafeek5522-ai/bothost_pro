@@ -9,12 +9,6 @@ on:
         default: 'release'
         type: choice
         options: [debug, profile, release]
-      output_type:
-        description: 'Output type'
-        required: true
-        default: 'apk'
-        type: choice
-        options: [apk, appbundle, apk-split]
 
 jobs:
   build:
@@ -38,29 +32,19 @@ jobs:
       - name: Add Internet Permissions
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
-          # نضيف الصلاحيات قبل </manifest>
           sed -i 's|</manifest>|<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n</manifest>|' $MANIFEST
           cat $MANIFEST
 
       - name: Pub get
         run: flutter pub get
 
-      - name: Build
+      - name: Build APK (arm64 only)
         run: |
           TYPE="${{ github.event.inputs.build_type }}"
-          OUT="${{ github.event.inputs.output_type }}"
-          if [ "$OUT" = "apk" ]; then
-            flutter build apk --$TYPE
-          elif [ "$OUT" = "apk-split" ]; then
-            flutter build apk --$TYPE --split-per-abi
-          elif [ "$OUT" = "appbundle" ]; then
-            flutter build appbundle --$TYPE
-          fi
+          flutter build apk --$TYPE --target-platform android-arm64
 
       - uses: actions/upload-artifact@v4
         with:
           name: build-output
-          path: |
-            build/app/outputs/flutter-apk/*.apk
-            build/app/outputs/bundle/*/*.aab
+          path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 7
