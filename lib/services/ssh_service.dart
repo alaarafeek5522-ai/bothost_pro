@@ -125,16 +125,33 @@ class SSHService {
         throw Exception('فشل تثبيت المتطلبات:\n$fullInstallLog');
       }
 
+      // ✅ FIX: Install pyTelegramBotAPI automatically if not present
       steps['check'] = '🔄 جاري التحقق من المكتبات...';
-      final checkResult = await client.execute('python3 -c "import telebot; print(\"OK\")" 2>&1 || echo "MODULE_MISSING"');
+      final checkResult = await client.execute(
+        'python3 -c "import telebot; print(\"OK\")" 2>&1 || echo "MODULE_MISSING"'
+      );
       final checkOutput = await _readStream(checkResult.stdout);
       await checkResult.done;
       
       if (checkOutput.contains('MODULE_MISSING')) {
-        steps['check'] = '❌ مكتبة telebot مش متوفرة';
-        throw Exception('مكتبة telebot مش متوفرة - جرب تثبيت يدوي: pip3 install pyTelegramBotAPI');
+        steps['check'] = '🔄 مكتبة telebot مش متوفرة، جاري التثبيت...';
+        
+        // Try to install pyTelegramBotAPI
+        final installTelebot = await client.execute(
+          'pip3 install pyTelegramBotAPI 2>&1 && echo "TELEBOT_OK" || echo "TELEBOT_FAILED"'
+        );
+        final telebotOutput = await _readStream(installTelebot.stdout);
+        await installTelebot.done;
+        
+        if (telebotOutput.contains('TELEBOT_OK')) {
+          steps['check'] = '✅ تم تثبيت pyTelegramBotAPI';
+        } else {
+          steps['check'] = '⚠️ مكتبة telebot مش متوفرة - البوت ممكن يحتاجها';
+          // Don't throw here - let the bot try to run anyway
+        }
+      } else {
+        steps['check'] = '✅ المكتبات جاهزة';
       }
-      steps['check'] = '✅ المكتبات جاهزة';
 
       // ✅ FIX: Use raw string for the part with $!
       steps['run'] = '🔄 جاري تشغيل البوت...';
@@ -247,7 +264,6 @@ class SSHService {
     final client = await _connect(server);
     try {
       final botDir = '/root/bots/user_$userId/$botName';
-      // ✅ FIX: Same fix here - raw string for $!
       final runCmd = 'cd ' + botDir + ' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!';
       final result = await client.execute(runCmd);
       final output = await _readStream(result.stdout);
