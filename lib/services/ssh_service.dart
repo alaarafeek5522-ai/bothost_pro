@@ -136,9 +136,9 @@ class SSHService {
       }
       steps['check'] = '✅ المكتبات جاهزة';
 
-      // ✅ FIX: Use string concatenation to avoid escape issues
+      // ✅ FIX: Use raw string for the part with $!
       steps['run'] = '🔄 جاري تشغيل البوت...';
-      final runCmd = 'cd ' + botDir + ' && nohup python3 ' + botFileName + ' > bot.log 2>&1 & echo $!';
+      final runCmd = 'cd ' + botDir + ' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!';
       final runResult = await client.execute(runCmd);
       final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
@@ -247,8 +247,8 @@ class SSHService {
     final client = await _connect(server);
     try {
       final botDir = '/root/bots/user_$userId/$botName';
-      // ✅ FIX: Same fix here - string concatenation
-      final runCmd = 'cd ' + botDir + ' && nohup python3 ' + botFileName + ' > bot.log 2>&1 & echo $!';
+      // ✅ FIX: Same fix here - raw string for $!
+      final runCmd = 'cd ' + botDir + ' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!';
       final result = await client.execute(runCmd);
       final output = await _readStream(result.stdout);
       await result.done;
