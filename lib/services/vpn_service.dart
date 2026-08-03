@@ -2,26 +2,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 class VPNService {
-  // قائمة بـ IP ranges المعروفة للـ VPNs
   static final List<String> _vpnRanges = [
-    '10.',      // Private
-    '172.16.',  // Private
-    '172.17.',
-    '172.18.',
-    '172.19.',
-    '172.20.',
-    '172.21.',
-    '172.22.',
-    '172.23.',
-    '172.24.',
-    '172.25.',
-    '172.26.',
-    '172.27.',
-    '172.28.',
-    '172.29.',
-    '172.30.',
-    '172.31.',
-    '192.168.', // Private
+    '10.', '172.16.', '172.17.', '172.18.', '172.19.',
+    '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
+    '172.25.', '172.26.', '172.27.', '172.28.', '172.29.',
+    '172.30.', '172.31.', '192.168.',
   ];
 
   static Future<bool> isVPNActive() async {
@@ -32,8 +17,7 @@ class VPNService {
           final ip = addr.address;
           for (final range in _vpnRanges) {
             if (ip.startsWith(range)) {
-              // ممكن يكون VPN أو شبكة محلية عادية
-              // نحتاج طريقة أدق
+              // Could be VPN or local network - need better detection
             }
           }
         }

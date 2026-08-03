@@ -1,4 +1,3 @@
-
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -8,7 +7,6 @@ import '../services/server_service.dart';
 import '../services/ssh_service.dart';
 import '../services/auth_service.dart';
 import '../services/telegram_service.dart';
-import '../services/github_api_service.dart';
 import '../services/update_service.dart';
 import '../models/bot_model.dart';
 import 'logs_screen.dart';
@@ -43,7 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadUser() async {
     final user = await AuthService.getCurrentUser();
-    if (user != null) {
+    if (user != null && mounted) {
       setState(() => _userEmail = user.email);
     }
   }
@@ -52,7 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = await AuthService.getCurrentUser();
     if (user != null) {
       final hasBot = await AuthService.userHasBot(user.deviceId);
-      setState(() => _hasBot = hasBot);
+      if (mounted) setState(() => _hasBot = hasBot);
     }
   }
 
@@ -104,7 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
       allowedExtensions: ['py'],
       withData: true,
     );
-    if (result != null && result.files.single.bytes != null) {
+    if (result != null && result.files.single.bytes != null && mounted) {
       setState(() {
         _botFile = result.files.single.bytes;
         _botFileName = result.files.single.name;
@@ -118,7 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
       allowedExtensions: ['txt'],
       withData: true,
     );
-    if (result != null && result.files.single.bytes != null) {
+    if (result != null && result.files.single.bytes != null && mounted) {
       setState(() {
         _reqFile = result.files.single.bytes;
         _reqFileName = result.files.single.name;
@@ -132,6 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showStep(String message) {
+    if (!mounted) return;
     setState(() {
       _deploySteps.add(message);
       _deployStatus = message;
@@ -140,11 +139,13 @@ class _HomeScreenState extends State<HomeScreen> {
       SnackBar(
         content: Text(message),
         duration: const Duration(seconds: 3),
-        backgroundColor: message.startsWith('❌') 
-            ? const Color(0xFFE94560) 
+        backgroundColor: message.startsWith('❌')
+            ? const Color(0xFFE94560)
             : message.startsWith('✅')
                 ? const Color(0xFF00BFA6)
                 : const Color(0xFF6C63FF),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
   }
@@ -176,10 +177,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final provider = context.read<AppProvider>();
     provider.setLoading(true);
     provider.clearError();
-    setState(() {
-      _deploySteps = [];
-      _deployStatus = 'جاري البدء...';
-    });
+    if (mounted) {
+      setState(() {
+        _deploySteps = [];
+        _deployStatus = 'جاري البدء...';
+      });
+    }
 
     try {
       final servers = provider.servers;
@@ -200,24 +203,28 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       for (final entry in steps.entries) {
-        _showStep(entry.value);
+        if (entry.key != 'pid') {
+          _showStep(entry.value);
+        }
       }
 
       final finalStatus = steps['run'] ?? '✅ تم التشغيل';
-      
+      final pid = steps['pid'];
+
       await AuthService.setBotStatus(true);
-      setState(() => _hasBot = true);
+      if (mounted) setState(() => _hasBot = true);
 
       final currentUser = await AuthService.getCurrentUser();
       if (currentUser != null) {
         await AuthService.updateBotStatus(currentUser.deviceId, true);
       }
-      
+
       provider.setBot(BotModel(
         name: botName,
         serverName: server.name,
         status: finalStatus,
         createdAt: DateTime.now(),
+        pid: pid,
       ));
 
     } catch (e) {
@@ -247,19 +254,14 @@ class _HomeScreenState extends State<HomeScreen> {
         (s) => s.name == provider.myBot!.serverName,
       );
       final pid = await SSHService.restartBot(
-        server, 
+        server,
         provider.myBot!.name,
         'bot.py',
         user.deviceId,
       );
       _showStep('✅ تم إعادة التشغيل! PID: $pid');
-      
-      provider.setBot(BotModel(
-        name: provider.myBot!.name,
-        serverName: provider.myBot!.serverName,
-        status: 'تم إعادة التشغيل ✅ PID: $pid',
-        createdAt: provider.myBot!.createdAt,
-      ));
+
+      provider.updateBotStatus('تم إعادة التشغيل ✅ PID: $pid', pid: pid);
     } catch (e) {
       _showStep('❌ فشل إعادة التشغيل: $e');
     }
@@ -267,7 +269,6 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.setLoading(false);
   }
 
-  // ========== إيقاف البوت فقط ==========
   Future<void> _stopBotOnly() async {
     final provider = context.read<AppProvider>();
     if (provider.myBot == null || provider.servers.isEmpty) return;
@@ -314,15 +315,10 @@ class _HomeScreenState extends State<HomeScreen> {
         (s) => s.name == provider.myBot!.serverName,
       );
       final stopped = await SSHService.stopBot(server, provider.myBot!.name, user.deviceId);
-      
+
       if (stopped) {
         _showStep('✅ تم إيقاف البوت');
-        provider.setBot(BotModel(
-          name: provider.myBot!.name,
-          serverName: provider.myBot!.serverName,
-          status: 'متوقف ⏹️',
-          createdAt: provider.myBot!.createdAt,
-        ));
+        provider.updateBotStatus('متوقف ⏹️');
       } else {
         _showStep('⚠️ البوت متوقف بالفعل أو مفيش process');
       }
@@ -333,7 +329,6 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.setLoading(false);
   }
 
-  // ========== حذف نهائي من السيرفر ==========
   Future<void> _deleteBotForever() async {
     final provider = context.read<AppProvider>();
     if (provider.myBot == null || provider.servers.isEmpty) return;
@@ -381,27 +376,25 @@ class _HomeScreenState extends State<HomeScreen> {
       final server = provider.servers.firstWhere(
         (s) => s.name == provider.myBot!.serverName,
       );
-      
-      // حذف من السيرفر
+
       final deleted = await SSHService.deleteBotFromServer(
-        server, 
-        provider.myBot!.name, 
+        server,
+        provider.myBot!.name,
         user.deviceId
       );
-      
+
       if (!deleted) {
         throw Exception('فشل حذف الملفات من السيرفر');
       }
 
-      // تحديث الحالة
       await AuthService.setBotStatus(false);
-      setState(() => _hasBot = false);
+      if (mounted) setState(() => _hasBot = false);
 
       final currentUser = await AuthService.getCurrentUser();
       if (currentUser != null) {
         await AuthService.updateBotStatus(currentUser.deviceId, false);
       }
-      
+
       await provider.clearSavedBot();
       _showStep('✅ تم الحذف النهائي!\nتقدر ترفع بوت جديد');
 
@@ -477,353 +470,371 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF6C63FF), Color(0xFF00BFA6)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF6C63FF).withOpacity(0.3),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        const Icon(Icons.rocket_launch, size: 50, color: Colors.white),
-                        const SizedBox(height: 10),
-                        Text(
-                          'BotHost Pro',
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          'استضافة البوتات بضغطة زر',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Colors.white70,
-                              ),
-                        ),
-                        if (_userEmail != null) ...[
-                          const SizedBox(height: 10),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              '👤 $_userEmail',
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                  _buildHeaderCard(),
                   const SizedBox(height: 25),
 
                   if (_hasBot || provider.myBot != null)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      margin: const EdgeInsets.only(bottom: 15),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFA726).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFFFA726)),
-                      ),
-                      child: const Row(
-                        children: [
-                          Icon(Icons.info, color: Color(0xFFFFA726)),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '⚠️ عندك بوت!\nلو عايز بوت جديد، احذف القديم الأول.',
-                              style: TextStyle(color: Color(0xFFFFA726), fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    _buildWarningCard(),
 
                   if (!_hasBot && provider.myBot == null)
-                    TextField(
-                      controller: _botNameController,
-                      decoration: InputDecoration(
-                        labelText: 'اسم البوت (إنجليزي فقط)',
-                        hintText: 'مثال: my_bot, bot123, test-bot',
-                        prefixIcon: const Icon(Icons.smart_toy),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        filled: true,
-                        fillColor: const Color(0xFF16213E),
-                        helperText: 'a-z, 0-9, -, _ فقط',
-                        helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
-                      ),
-                    ),
-                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 15),
+                    _buildDeployForm(provider),
 
-                  if (!_hasBot && provider.myBot == null)
-                    _buildFileCard(
-                      icon: Icons.code,
-                      label: 'ملف البوت (bot.py)',
-                      fileName: _botFileName,
-                      onTap: _pickBotFile,
-                      isRequired: true,
-                    ),
-                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 10),
+                  if (_deploySteps.isNotEmpty) _buildStepsCard(),
 
-                  if (!_hasBot && provider.myBot == null)
-                    _buildFileCard(
-                      icon: Icons.list_alt,
-                      label: 'ملف المتطلبات (requirements.txt)',
-                      fileName: _reqFileName,
-                      onTap: _pickReqFile,
-                      isRequired: false,
-                    ),
-                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 20),
-
-                  if (!_hasBot && provider.myBot == null)
-                    SizedBox(
-                      height: 55,
-                      child: ElevatedButton.icon(
-                        onPressed: provider.isLoading ? null : _deployBot,
-                        icon: provider.isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.rocket_launch),
-                        label: Text(
-                          provider.isLoading ? 'جاري التشغيل...' : '🚀 شغل البوت',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF6C63FF),
-                          foregroundColor: Colors.white,
-                          elevation: 8,
-                          shadowColor: const Color(0xFF6C63FF).withOpacity(0.5),
-                        ),
-                      ),
-                    ),
-                  if (!_hasBot && provider.myBot == null) const SizedBox(height: 15),
-
-                  if (_deploySteps.isNotEmpty) ...[
-                    Container(
-                      padding: const EdgeInsets.all(15),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF16213E),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFF6C63FF).withOpacity(0.5)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.list_alt, color: Color(0xFF6C63FF), size: 18),
-                              SizedBox(width: 8),
-                              Text(
-                                'خطوات التشغيل:',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF6C63FF),
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          ..._deploySteps.map((step) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 3),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  step.startsWith('❌') 
-                                      ? Icons.error 
-                                      : step.startsWith('✅')
-                                          ? Icons.check_circle
-                                          : step.startsWith('🎯')
-                                              ? Icons.location_on
-                                              : Icons.pending,
-                                  size: 16,
-                                  color: step.startsWith('❌') 
-                                      ? const Color(0xFFE94560) 
-                                      : step.startsWith('✅') || step.startsWith('🎯')
-                                          ? const Color(0xFF00BFA6)
-                                          : Colors.white70,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    step,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      height: 1.4,
-                                      color: step.startsWith('❌') 
-                                          ? const Color(0xFFE94560) 
-                                          : step.startsWith('✅') || step.startsWith('🎯')
-                                              ? const Color(0xFF00BFA6)
-                                              : Colors.white70,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 15),
-                  ],
-
-                  if (provider.myBot != null || _hasBot) ...[
-                    Container(
-                      padding: const EdgeInsets.all(15),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF16213E),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFF00BFA6)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF00BFA6).withOpacity(0.1),
-                            blurRadius: 10,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.check_circle, color: Color(0xFF00BFA6)),
-                              const SizedBox(width: 8),
-                              Text(
-                                'بوتك! 🎉',
-                                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                      color: const Color(0xFF00BFA6),
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                              ),
-                            ],
-                          ),
-                          const Divider(color: Colors.white24, height: 20),
-                          if (provider.myBot != null) ...[
-                            _buildInfoRow('الاسم:', provider.myBot!.name),
-                            _buildInfoRow('السيرفر:', provider.myBot!.serverName),
-                            _buildInfoRow('الحالة:', provider.myBot!.status),
-                            _buildInfoRow('التاريخ:', provider.myBot!.createdAt.toString().substring(0, 16)),
-                          ],
-                          const SizedBox(height: 15),
-                          
-                          // ========== الأزرار الجديدة ==========
-                          Column(
-                            children: [
-                              // صف 1: إعادة تشغيل + إيقاف
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: _restartBot,
-                                      icon: const Icon(Icons.refresh, size: 18),
-                                      label: const Text('إعادة تشغيل'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF00BFA6),
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: _stopBotOnly,
-                                      icon: const Icon(Icons.stop_circle, size: 18),
-                                      label: const Text('إيقاف'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFFFFA726),
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 10),
-                              
-                              // صف 2: حذف نهائي
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed: _deleteBotForever,
-                                  icon: const Icon(Icons.delete_forever, size: 18),
-                                  label: const Text('🗑️ حذف نهائي من السيرفر'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFFE94560),
-                                    padding: const EdgeInsets.symmetric(vertical: 14),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                      onPressed: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const LogsScreen()),
-                      ),
-                      icon: const Icon(Icons.terminal),
-                      label: const Text('📋 عرض السجلات'),
-                    ),
-                  ],
+                  if (provider.myBot != null || _hasBot) _buildBotCard(provider),
 
                   const Spacer(),
 
                   if (provider.servers.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF16213E),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.dns, size: 18, color: Colors.white70),
-                          const SizedBox(width: 8),
-                          Text(
-                            '${provider.servers.length} سيرفر متاح',
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                          const SizedBox(width: 15),
-                          Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(
-                              color: Color(0xFF00BFA6),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    _buildServerStatus(provider),
                 ],
               ),
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHeaderCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF6C63FF), Color(0xFF00BFA6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF6C63FF).withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.rocket_launch, size: 50, color: Colors.white),
+          const SizedBox(height: 10),
+          Text(
+            'BotHost Pro',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'استضافة البوتات بضغطة زر',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: Colors.white70,
+                ),
+          ),
+          if (_userEmail != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                '👤 $_userEmail',
+                style: const TextStyle(color: Colors.white, fontSize: 12),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWarningCard() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 15),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFA726).withOpacity(0.2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFA726)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info, color: Color(0xFFFFA726)),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '⚠️ عندك بوت!\nلو عايز بوت جديد، احذف القديم الأول.',
+              style: TextStyle(color: Color(0xFFFFA726), fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDeployForm(AppProvider provider) {
+    return Expanded(
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _botNameController,
+              decoration: InputDecoration(
+                labelText: 'اسم البوت (إنجليزي فقط)',
+                hintText: 'مثال: my_bot, bot123, test-bot',
+                prefixIcon: const Icon(Icons.smart_toy),
+                helperText: 'a-z, 0-9, -, _ فقط',
+                helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+            ),
+            const SizedBox(height: 15),
+            _buildFileCard(
+              icon: Icons.code,
+              label: 'ملف البوت (bot.py)',
+              fileName: _botFileName,
+              onTap: _pickBotFile,
+              isRequired: true,
+            ),
+            const SizedBox(height: 10),
+            _buildFileCard(
+              icon: Icons.list_alt,
+              label: 'ملف المتطلبات (requirements.txt)',
+              fileName: _reqFileName,
+              onTap: _pickReqFile,
+              isRequired: false,
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              height: 55,
+              child: ElevatedButton.icon(
+                onPressed: provider.isLoading ? null : _deployBot,
+                icon: provider.isLoading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.rocket_launch),
+                label: Text(
+                  provider.isLoading ? 'جاري التشغيل...' : '🚀 شغل البوت',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF6C63FF),
+                  foregroundColor: Colors.white,
+                  elevation: 8,
+                  shadowColor: const Color(0xFF6C63FF).withOpacity(0.5),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepsCard() {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      margin: const EdgeInsets.only(bottom: 15),
+      decoration: BoxDecoration(
+        color: const Color(0xFF16213E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF6C63FF).withOpacity(0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.list_alt, color: Color(0xFF6C63FF), size: 18),
+              SizedBox(width: 8),
+              Text(
+                'خطوات التشغيل:',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF6C63FF),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ..._deploySteps.map((step) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  step.startsWith('❌')
+                      ? Icons.error
+                      : step.startsWith('✅')
+                          ? Icons.check_circle
+                          : step.startsWith('🎯')
+                              ? Icons.location_on
+                              : Icons.pending,
+                  size: 16,
+                  color: step.startsWith('❌')
+                      ? const Color(0xFFE94560)
+                      : step.startsWith('✅') || step.startsWith('🎯')
+                          ? const Color(0xFF00BFA6)
+                          : Colors.white70,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    step,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: step.startsWith('❌')
+                          ? const Color(0xFFE94560)
+                          : step.startsWith('✅') || step.startsWith('🎯')
+                              ? const Color(0xFF00BFA6)
+                              : Colors.white70,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          )),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBotCard(AppProvider provider) {
+    return Expanded(
+      child: SingleChildScrollView(
+        child: Container(
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            color: const Color(0xFF16213E),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFF00BFA6)),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF00BFA6).withOpacity(0.1),
+                blurRadius: 10,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Color(0xFF00BFA6)),
+                  const SizedBox(width: 8),
+                  Text(
+                    'بوتك! 🎉',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: const Color(0xFF00BFA6),
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                ],
+              ),
+              const Divider(color: Colors.white24, height: 20),
+              if (provider.myBot != null) ...[
+                _buildInfoRow('الاسم:', provider.myBot!.name),
+                _buildInfoRow('السيرفر:', provider.myBot!.serverName),
+                _buildInfoRow('الحالة:', provider.myBot!.status),
+                _buildInfoRow('التاريخ:', provider.myBot!.createdAt.toString().substring(0, 16)),
+              ],
+              const SizedBox(height: 15),
+              Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _restartBot,
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('إعادة تشغيل'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00BFA6),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _stopBotOnly,
+                          icon: const Icon(Icons.stop_circle, size: 18),
+                          label: const Text('إيقاف'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFFA726),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _deleteBotForever,
+                      icon: const Icon(Icons.delete_forever, size: 18),
+                      label: const Text('🗑️ حذف نهائي من السيرفر'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFE94560),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const LogsScreen()),
+                    ),
+                    icon: const Icon(Icons.terminal),
+                    label: const Text('📋 عرض السجلات'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildServerStatus(AppProvider provider) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF16213E),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.dns, size: 18, color: Colors.white70),
+          const SizedBox(width: 8),
+          Text(
+            '${provider.servers.length} سيرفر متاح',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(width: 15),
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: Color(0xFF00BFA6),
+              shape: BoxShape.circle,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -887,14 +898,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   applicationName: 'BotHost Pro',
                   applicationVersion: '1.0.0',
                   applicationIcon: const Icon(Icons.rocket_launch, color: Color(0xFF6C63FF)),
-                  children: [
-                    const Text('استضافة البوتات بضغطة زر'),
-                    const SizedBox(height: 10),
-                    const Text('📢 قناة التليجرام: @ahrgq'),
-                    const SizedBox(height: 5),
-                    const Text('🔒 كل حساب = بوت واحد'),
-                    const SizedBox(height: 5),
-                    const Text('📱 جهاز واحد = حساب واحد'),
+                  children: const [
+                    Text('استضافة البوتات بضغطة زر'),
+                    SizedBox(height: 10),
+                    Text('📢 قناة التليجرام: @ahrgq'),
+                    SizedBox(height: 5),
+                    Text('🔒 كل حساب = بوت واحد'),
+                    SizedBox(height: 5),
+                    Text('📱 جهاز واحد = حساب واحد'),
                   ],
                 );
               },
@@ -991,4 +1002,3 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-

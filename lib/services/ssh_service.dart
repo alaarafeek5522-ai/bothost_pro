@@ -114,18 +114,18 @@ class SSHService {
       final installError = await _readStream(installResult.stderr);
       await installResult.done;
 
-      final fullInstallLog = 'STDOUT:\\n$installOutput\\n\\nSTDERR:\\n$installError';
+      final fullInstallLog = 'STDOUT:\n$installOutput\n\nSTDERR:\n$installError';
       
       if (installOutput.contains('===INSTALL_OK===')) {
         steps['install'] = '✅ تم تثبيت المتطلبات';
       } else {
         steps['install'] = '❌ فشل تثبيت المتطلبات';
         steps['install_log'] = fullInstallLog;
-        throw Exception('فشل تثبيت المتطلبات:\\n$fullInstallLog');
+        throw Exception('فشل تثبيت المتطلبات:\n$fullInstallLog');
       }
 
       steps['check'] = '🔄 جاري التحقق من المكتبات...';
-      final checkResult = await client.execute('python3 -c "import telebot; print(\\\"OK\\\")" 2>&1 || echo "MODULE_MISSING"');
+      final checkResult = await client.execute('python3 -c "import telebot; print(\"OK\")" 2>&1 || echo "MODULE_MISSING"');
       final checkOutput = await _readStream(checkResult.stdout);
       await checkResult.done;
       
@@ -135,11 +135,10 @@ class SSHService {
       }
       steps['check'] = '✅ المكتبات جاهزة';
 
+      // ✅ FIX: Use normal string with proper escaping for shell
       steps['run'] = '🔄 جاري تشغيل البوت...';
-      // ✅ استخدم r'' raw string عشان $! يبقى literal
-      final runResult = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
-      );
+      final runCmd = 'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!';
+      final runResult = await client.execute(runCmd);
       final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
       
@@ -149,6 +148,7 @@ class SSHService {
         throw Exception(steps['run']);
       }
       steps['run'] = '✅ البوت شغال! PID: $pid';
+      steps['pid'] = pid;
 
     } catch (e) {
       if (!steps.containsKey('run')) {
@@ -162,7 +162,6 @@ class SSHService {
     return steps;
   }
 
-  // ========== إيقاف البوت ==========
   static Future<bool> stopBot(ServerModel server, String botName, String userId) async {
     final client = await _connect(server);
     try {
@@ -171,22 +170,17 @@ class SSHService {
       final result = await client.execute('''
         echo "=== STOPPING BOT ==="
         
-        # اقتل بالمسار
         pkill -9 -f "$botDir" 2>/dev/null || true
         
-        # استنى
         sleep 2
         
-        # لو لسه شغال، اقتل بـ PID
         for pid in \$(ps aux | grep "$botDir" | grep -v grep | awk '{print \$2}'); do
           echo "Killing PID: \$pid"
           kill -9 \$pid 2>/dev/null || true
         done
         
-        # استنى تاني
         sleep 1
         
-        # تأكد إنه مات
         ps aux | grep "$botDir" | grep -v grep || echo "STOPPED"
       ''');
       
@@ -199,12 +193,9 @@ class SSHService {
     }
   }
 
-  // ========== حذف نهائي من السيرفر ==========
   static Future<bool> deleteBotFromServer(ServerModel server, String botName, String userId) async {
-    // ========== الخطوة 1: اقتل الـ process ==========
     await stopBot(server, botName, userId);
     
-    // ========== الخطوة 2: امسح الملفات ==========
     final client = await _connect(server);
     try {
       final botDir = '/root/bots/user_$userId/$botName';
@@ -212,10 +203,8 @@ class SSHService {
       final result = await client.execute('''
         echo "=== DELETING FILES ==="
         
-        # امسح المجلد
         rm -rf $botDir 2>/dev/null && echo "DELETED" || echo "RM_FAILED"
         
-        # تأكد
         ls -la $botDir 2>/dev/null || echo "DIR_GONE"
       ''');
       
@@ -257,10 +246,9 @@ class SSHService {
     final client = await _connect(server);
     try {
       final botDir = '/root/bots/user_$userId/$botName';
-      // ✅ استخدم r'' raw string عشان $! يبقى literal
-      final result = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \$!'
-      );
+      // ✅ FIX: Same fix here
+      final runCmd = 'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!';
+      final result = await client.execute(runCmd);
       final output = await _readStream(result.stdout);
       await result.done;
       return output.trim();

@@ -19,13 +19,25 @@ class ServerModel {
 
   factory ServerModel.fromJson(Map<String, dynamic> json) {
     return ServerModel(
-      id: json['id'],
-      name: json['name'],
-      host: json['host'],
-      port: json['port'],
-      user: json['user'],
-      password: json['password'],
+      id: json['id'] ?? 0,
+      name: json['name'] ?? 'Unknown',
+      host: json['host'] ?? '',
+      port: json['port'] ?? 22,
+      user: json['user'] ?? 'root',
+      password: json['password'] ?? '',
       botCount: json['botCount'] ?? 0,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'host': host,
+      'port': port,
+      'user': user,
+      'password': password,
+      'botCount': botCount,
+    };
   }
 }

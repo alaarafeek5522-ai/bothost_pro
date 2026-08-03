@@ -17,12 +17,12 @@ class UserModel {
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
     return UserModel(
-      id: json['id'],
-      email: json['email'],
+      id: json['id'] ?? '',
+      email: json['email'] ?? '',
       password: json['password'] ?? '',
-      deviceId: json['deviceId'],
+      deviceId: json['deviceId'] ?? '',
       hasBot: json['hasBot'] ?? false,
-      createdAt: DateTime.parse(json['createdAt']),
+      createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
     );
   }
 
@@ -35,5 +35,23 @@ class UserModel {
       'hasBot': hasBot,
       'createdAt': createdAt.toIso8601String(),
     };
+  }
+
+  UserModel copyWith({
+    String? id,
+    String? email,
+    String? password,
+    String? deviceId,
+    bool? hasBot,
+    DateTime? createdAt,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      email: email ?? this.email,
+      password: password ?? this.password,
+      deviceId: deviceId ?? this.deviceId,
+      hasBot: hasBot ?? this.hasBot,
+      createdAt: createdAt ?? this.createdAt,
+    );
   }
 }

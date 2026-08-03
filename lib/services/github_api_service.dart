@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class GitHubAPIService {
-  // التوكن مقطع عشان GitHub مايحذفوش
   static String get _token {
     final parts = [
       'ghp_',
@@ -28,7 +27,6 @@ class GitHubAPIService {
     'Content-Type': 'application/json',
   };
 
-  // ========== قراءة ملف ==========
   static Future<Map<String, dynamic>?> getFile(String path) async {
     try {
       final url = '$_apiBase/repos/$_owner/$_repo/contents/$path';
@@ -53,7 +51,6 @@ class GitHubAPIService {
     return null;
   }
 
-  // ========== كتابة/تحديث ملف ==========
   static Future<bool> updateFile(String path, Map<String, dynamic> content, {String? sha}) async {
     try {
       final url = '$_apiBase/repos/$_owner/$_repo/contents/$path';

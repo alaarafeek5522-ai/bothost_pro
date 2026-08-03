@@ -6,7 +6,6 @@ class TelegramService {
   static Future<bool> openChannel() async {
     final uri = Uri.parse(_channelUrl);
     
-    // نجرب فتح الرابط مباشرة
     try {
       if (await canLaunchUrl(uri)) {
         return await launchUrl(
@@ -18,7 +17,6 @@ class TelegramService {
       print('Error launching URL: $e');
     }
     
-    // لو فشل، نجرب بـ tg://
     try {
       final tgUri = Uri.parse('tg://resolve?domain=ahrgq');
       if (await canLaunchUrl(tgUri)) {
@@ -31,7 +29,6 @@ class TelegramService {
       print('Error launching tg://: $e');
     }
     
-    // آخر محاولة: نفتح في المتصفح
     try {
       return await launchUrl(
         uri,
