@@ -8,11 +8,11 @@ import '../services/ssh_service.dart';
 import '../services/auth_service.dart';
 import '../services/telegram_service.dart';
 import '../services/update_service.dart';
+import '../services/local_file_service.dart'; // ✅
 import '../models/bot_model.dart';
-import '../models/server_model.dart'; // ✅ أضف ده
+import '../models/server_model.dart';
 import 'logs_screen.dart';
 import 'login_screen.dart';
-
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _botNameController = TextEditingController();
   List<String> _deploySteps = [];
   bool _isCheckingStatus = false;
+  bool _isLoadingFiles = false; // ✅
 
   @override
   void initState() {
@@ -41,6 +42,35 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadServers();
     await _checkUpdate();
     await _syncAllBotsStatus();
+    await _loadSavedFiles(); // ✅
+  }
+
+  // ✅ تحميل الملفات المحفوظة محلياً
+  Future<void> _loadSavedFiles() async {
+    final provider = context.read<AppProvider>();
+    if (provider.savedBotFileName == null) return;
+
+    setState(() => _isLoadingFiles = true);
+
+    final botBytes = await LocalFileService.readBotFile(provider.savedBotFileName!);
+    if (botBytes != null) {
+      setState(() {
+        _botFile = botBytes;
+        _botFileName = provider.savedBotFileName!;
+      });
+    }
+
+    if (provider.savedReqFileName != null) {
+      final reqBytes = await LocalFileService.readReqFile(provider.savedReqFileName!);
+      if (reqBytes != null) {
+        setState(() {
+          _reqFile = reqBytes;
+          _reqFileName = provider.savedReqFileName!;
+        });
+      }
+    }
+
+    setState(() => _isLoadingFiles = false);
   }
 
   Future<void> _loadUser() async {
@@ -138,10 +168,18 @@ class _HomeScreenState extends State<HomeScreen> {
       withData: true,
     );
     if (result != null && result.files.single.bytes != null) {
+      final bytes = result.files.single.bytes!;
+      final name = result.files.single.name;
+      
+      // ✅ حفظ محلي
+      await LocalFileService.saveBotFile(bytes, name);
+      
       setState(() {
-        _botFile = result.files.single.bytes;
-        _botFileName = result.files.single.name;
+        _botFile = bytes;
+        _botFileName = name;
       });
+      
+      context.read<AppProvider>().saveFileNames(botFileName: name);
     }
   }
 
@@ -152,10 +190,18 @@ class _HomeScreenState extends State<HomeScreen> {
       withData: true,
     );
     if (result != null && result.files.single.bytes != null) {
+      final bytes = result.files.single.bytes!;
+      final name = result.files.single.name;
+      
+      // ✅ حفظ محلي
+      await LocalFileService.saveReqFile(bytes, name);
+      
       setState(() {
-        _reqFile = result.files.single.bytes;
-        _reqFileName = result.files.single.name;
+        _reqFile = bytes;
+        _reqFileName = name;
       });
+      
+      context.read<AppProvider>().saveFileNames(reqFileName: name);
     }
   }
 
@@ -185,7 +231,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _deployBot() async {
-    if (_botFile == null || _botNameController.text.isEmpty) {
+    // ✅ نقرأ الملفات من التخزين المحلي لو مش موجودة في الـ memory
+    final provider = context.read<AppProvider>();
+    
+    Uint8List? botBytes = _botFile;
+    Uint8List? reqBytes = _reqFile;
+    
+    if (botBytes == null && provider.savedBotFileName != null) {
+      botBytes = await LocalFileService.readBotFile(provider.savedBotFileName!);
+    }
+    if (reqBytes == null && provider.savedReqFileName != null) {
+      reqBytes = await LocalFileService.readReqFile(provider.savedReqFileName!);
+    }
+
+    if (botBytes == null || _botNameController.text.isEmpty) {
       _showStep('❌ اختار ملف البوت واكتب الاسم');
       return;
     }
@@ -203,15 +262,11 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final provider = context.read<AppProvider>();
-    
-    // ✅ نتأكد إن الاسم مش مستخدم قبل كده
     if (provider.myBots.any((b) => b.name == botName)) {
       _showStep('❌ اسم البوت ده مستخدم قبل كده');
       return;
     }
 
-    // ✅ نختار السيرفر
     final server = provider.selectedServer;
     if (server == null) {
       _showStep('❌ اختار سيرفر الأول');
@@ -227,9 +282,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
       final steps = await SSHService.deployBot(
         server: server,
-        botFile: _botFile!,
-        botFileName: _botFileName,
-        reqFile: _reqFile,
+        botFile: botBytes,
+        botFileName: _botFileName.isNotEmpty ? _botFileName : 'bot.py',
+        reqFile: reqBytes,
         botName: botName,
         userId: user.deviceId,
       );
@@ -251,12 +306,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       _showStep('✅ البوت شغال بنجاح!');
 
-      // نمسح الـ form
       setState(() {
-        _botFile = null;
-        _botFileName = '';
-        _reqFile = null;
-        _reqFileName = '';
         _botNameController.clear();
         _deploySteps = [];
       });
@@ -456,7 +506,7 @@ class _HomeScreenState extends State<HomeScreen> {
             title: const Text('🤖 BotHost Pro'),
             centerTitle: true,
             actions: [
-              if (_isCheckingStatus)
+              if (_isCheckingStatus || _isLoadingFiles)
                 const Padding(
                   padding: EdgeInsets.all(12),
                   child: SizedBox(
@@ -704,7 +754,6 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ✅ اختيار السيرفر
         if (provider.servers.isNotEmpty) ...[
           Container(
             padding: const EdgeInsets.all(15),
