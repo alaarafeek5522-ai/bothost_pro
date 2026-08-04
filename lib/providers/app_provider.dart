@@ -10,70 +10,126 @@ class AppProvider extends ChangeNotifier {
   bool _isLoading = false;
   String? _error;
   String _logs = '';
-  bool _isInitialized = false;
+  String? _userEmail;
+  bool _hasBot = false;
+  String? _botServerName;
+  String? _botPid;
 
-  List<ServerModel> get servers => List.unmodifiable(_servers);
+  // Getters
+  List<ServerModel> get servers => _servers;
   BotModel? get myBot => _myBot;
   bool get isLoading => _isLoading;
   String? get error => _error;
   String get logs => _logs;
-  bool get isInitialized => _isInitialized;
+  String? get userEmail => _userEmail;
+  bool get hasBot => _hasBot;
+  String? get botServerName => _botServerName;
+  String? get botPid => _botPid;
 
   AppProvider() {
-    _loadSavedBot();
+    _loadAllData();
   }
 
+  // ========== تحميل كل البيانات ==========
+  Future<void> _loadAllData() async {
+    await _loadSavedBot();
+    await _loadUserData();
+  }
+
+  // ========== تحميل بيانات البوت ==========
   Future<void> _loadSavedBot() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final botJson = prefs.getString('saved_bot');
-      if (botJson != null) {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // البوت المحفوظ
+    final botJson = prefs.getString('saved_bot');
+    if (botJson != null) {
+      try {
         final data = jsonDecode(botJson);
-        _myBot = BotModel.fromJson(data);
+        _myBot = BotModel(
+          name: data['name'],
+          serverName: data['serverName'],
+          status: data['status'],
+          createdAt: DateTime.parse(data['createdAt']),
+        );
+        _botServerName = data['serverName'];
+        _botPid = data['pid'];
+      } catch (e) {
+        print('فشل تحميل البوت: $e');
       }
-      _isInitialized = true;
-    } catch (e) {
-      debugPrint('فشل تحميل البوت المحفوظ: $e');
-      _isInitialized = true;
     }
+    
+    // حالة البوت
+    _hasBot = prefs.getBool('has_bot') ?? false;
+    
     notifyListeners();
   }
 
+  // ========== تحميل بيانات المستخدم ==========
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    _userEmail = prefs.getString('user_email');
+    notifyListeners();
+  }
+
+  // ========== حفظ البوت ==========
   Future<void> _saveBot() async {
     if (_myBot == null) return;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('saved_bot', jsonEncode(_myBot!.toJson()));
-    } catch (e) {
-      debugPrint('فشل حفظ البوت: $e');
-    }
+    final prefs = await SharedPreferences.getInstance();
+    final data = {
+      'name': _myBot!.name,
+      'serverName': _myBot!.serverName,
+      'status': _myBot!.status,
+      'createdAt': _myBot!.createdAt.toIso8601String(),
+      'pid': _botPid,
+    };
+    await prefs.setString('saved_bot', jsonEncode(data));
+    await prefs.setBool('has_bot', _hasBot);
   }
 
-  Future<void> clearSavedBot() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('saved_bot');
-      _myBot = null;
-      notifyListeners();
-    } catch (e) {
-      debugPrint('فشل حذف البوت: $e');
-    }
-  }
-
-  void setServers(List<ServerModel> servers) {
-    _servers = List.from(servers);
+  // ========== حفظ بيانات المستخدم ==========
+  Future<void> saveUserEmail(String email) async {
+    _userEmail = email;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_email', email);
     notifyListeners();
   }
 
-  void setBot(BotModel bot) {
+  // ========== مسح البوت ==========
+  Future<void> clearSavedBot() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('saved_bot');
+    await prefs.remove('has_bot');
+    _myBot = null;
+    _hasBot = false;
+    _botServerName = null;
+    _botPid = null;
+    notifyListeners();
+  }
+
+  // ========== Setters ==========
+  void setServers(List<ServerModel> servers) {
+    _servers = servers;
+    notifyListeners();
+  }
+
+  void setBot(BotModel bot, {String? pid}) {
     _myBot = bot;
+    _hasBot = true;
+    _botServerName = bot.serverName;
+    _botPid = pid;
     _saveBot();
     notifyListeners();
   }
 
   void updateBotStatus(String status, {String? pid}) {
     if (_myBot == null) return;
-    _myBot = _myBot!.copyWith(status: status, pid: pid);
+    _myBot = BotModel(
+      name: _myBot!.name,
+      serverName: _myBot!.serverName,
+      status: status,
+      createdAt: _myBot!.createdAt,
+    );
+    if (pid != null) _botPid = pid;
     _saveBot();
     notifyListeners();
   }
@@ -98,13 +154,24 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addServer(ServerModel server) {
-    _servers.add(server);
-    notifyListeners();
-  }
-
-  void removeServer(int id) {
-    _servers.removeWhere((s) => s.id == id);
-    notifyListeners();
+  // ========== تحديث حالة البوت من السيرفر ==========
+  Future<void> refreshBotStatus() async {
+    if (_myBot == null || _servers.isEmpty) return;
+    
+    try {
+      final server = _servers.firstWhere(
+        (s) => s.name == _myBot!.serverName,
+        orElse: () => throw Exception('السيرفر مش موجود'),
+      );
+      
+      // هنستخدم SSHService.checkBotStatus
+      // لكن عشان نتجنب circular dependency، هنحط المنطق هنا
+      // أو نستخدم callback
+      
+      // ببساطة نحدّث الـ UI إننا بنعمل check
+      notifyListeners();
+    } catch (e) {
+      print('Refresh error: $e');
+    }
   }
 }

@@ -47,17 +47,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _showError(e.toString());
     }
 
-    if (mounted) setState(() => _isLoading = false);
+    setState(() => _isLoading = false);
   }
 
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: const Color(0xFFE94560),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
+      SnackBar(content: Text(msg), backgroundColor: const Color(0xFFE94560)),
     );
   }
 
@@ -88,6 +83,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   labelText: 'البريد الإلكتروني',
                   prefixIcon: const Icon(Icons.email),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  filled: true,
+                  fillColor: const Color(0xFF16213E),
                 ),
                 keyboardType: TextInputType.emailAddress,
               ),
@@ -98,6 +95,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   labelText: 'كلمة المرور',
                   prefixIcon: const Icon(Icons.lock),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  filled: true,
+                  fillColor: const Color(0xFF16213E),
                 ),
                 obscureText: true,
               ),
@@ -108,6 +107,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   labelText: 'تأكيد كلمة المرور',
                   prefixIcon: const Icon(Icons.lock_outline),
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  filled: true,
+                  fillColor: const Color(0xFF16213E),
                 ),
                 obscureText: true,
               ),

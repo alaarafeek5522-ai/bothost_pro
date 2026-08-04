@@ -22,7 +22,7 @@ class _LogsScreenState extends State<LogsScreen> {
     final user = await AuthService.getCurrentUser();
     if (user == null) return;
 
-    if (mounted) setState(() => _isLoading = true);
+    setState(() => _isLoading = true);
 
     try {
       final server = provider.servers.firstWhere(
@@ -34,13 +34,13 @@ class _LogsScreenState extends State<LogsScreen> {
         user.deviceId,
       );
       provider.setLogs(logs);
-      if (mounted) setState(() => _detailedLogs = logs);
+      setState(() => _detailedLogs = logs);
     } catch (e) {
       provider.setLogs('فشل في جلب السجلات: $e');
-      if (mounted) setState(() => _detailedLogs = 'فشل في جلب السجلات: $e');
+      setState(() => _detailedLogs = 'فشل في جلب السجلات: $e');
     }
 
-    if (mounted) setState(() => _isLoading = false);
+    setState(() => _isLoading = false);
   }
 
   @override
