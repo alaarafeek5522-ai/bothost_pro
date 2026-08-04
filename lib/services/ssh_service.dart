@@ -5,7 +5,6 @@ import 'package:dartssh2/dartssh2.dart';
 import '../models/server_model.dart';
 
 class SSHService {
-  // ========== Connection Pool ==========
   static final Map<String, SSHClient> _clients = {};
   static final Map<String, DateTime> _lastUsed = {};
 
@@ -35,12 +34,6 @@ class SSHService {
     _clients[key] = client;
     _lastUsed[key] = DateTime.now();
     return client;
-  }
-
-  static void _closeConnection(String key) {
-    _clients[key]?.close();
-    _clients.remove(key);
-    _lastUsed.remove(key);
   }
 
   static void closeAll() {
@@ -175,9 +168,9 @@ class SSHService {
       await client.execute('pkill -9 -f "$botDir" 2>/dev/null || true');
       await Future.delayed(const Duration(seconds: 1));
       
-      // ✅ هربنا الـ $ بـ \$
+      // ✅ raw string - Dart ما بيعتبرش $ فيها
       final runResult = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
+        r'cd ' + botDir + r' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!'
       );
       final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
@@ -304,9 +297,9 @@ class SSHService {
         throw Exception('ملف البوت مش موجود على السيرفر');
       }
       
-      // ✅ هربنا الـ $ بـ \$
+      // ✅ raw string - Dart ما بيعتبرش $ فيها
       final result = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
+        r'cd ' + botDir + r' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!'
       );
       final output = await _readStream(result.stdout);
       await result.done;
