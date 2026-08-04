@@ -12,8 +12,6 @@ class AppProvider extends ChangeNotifier {
   String _logs = '';
   String? _userEmail;
   ServerModel? _selectedServer;
-  
-  // ✅ حفظ أسماء الملفات محلياً
   String? _savedBotFileName;
   String? _savedReqFileName;
 
@@ -30,20 +28,22 @@ class AppProvider extends ChangeNotifier {
   String? get savedReqFileName => _savedReqFileName;
 
   AppProvider() {
-    _loadAllData();
+    _init();
   }
 
-  Future<void> _loadAllData() async {
-    await _loadSavedBots();
+  Future<void> _init() async {
     await _loadUserData();
-    await _loadSavedFileNames(); // ✅
+    await _loadSavedFileNames();
+    await _loadSavedBots(); // ✅ نحمل البوتات الأول
+    // السيرفرات هتتحمل من HomeScreen
   }
 
   Future<void> _loadSavedBots() async {
     final prefs = await SharedPreferences.getInstance();
     
+    // ✅ نحاول الجديد الأول
     final botsJson = prefs.getString('saved_bots');
-    if (botsJson != null) {
+    if (botsJson != null && botsJson.isNotEmpty) {
       try {
         final List<dynamic> data = jsonDecode(botsJson);
         _myBots = data.map((b) => BotModel(
@@ -52,10 +52,16 @@ class AppProvider extends ChangeNotifier {
           status: b['status'],
           createdAt: DateTime.parse(b['createdAt']),
         )).toList();
+        print('✅ Loaded ${_myBots.length} bots from saved_bots');
       } catch (e) {
-        print('فشل تحميل البوتات: $e');
-        final oldBot = prefs.getString('saved_bot');
-        if (oldBot != null) {
+        print('❌ Failed to load saved_bots: $e');
+        _myBots = [];
+      }
+    } else {
+      // ✅ Fallback للقديم
+      final oldBot = prefs.getString('saved_bot');
+      if (oldBot != null && oldBot.isNotEmpty) {
+        try {
           final b = jsonDecode(oldBot);
           _myBots = [BotModel(
             name: b['name'],
@@ -63,16 +69,17 @@ class AppProvider extends ChangeNotifier {
             status: b['status'],
             createdAt: DateTime.parse(b['createdAt']),
           )];
+          print('✅ Loaded 1 bot from old saved_bot');
+          // نحول للجديد
+          await _saveBots();
+          await prefs.remove('saved_bot');
+        } catch (e) {
+          print('❌ Failed to load old saved_bot: $e');
+          _myBots = [];
         }
+      } else {
+        _myBots = [];
       }
-    }
-    
-    final selectedServerName = prefs.getString('selected_server');
-    if (selectedServerName != null && _servers.isNotEmpty) {
-      _selectedServer = _servers.firstWhere(
-        (s) => s.name == selectedServerName,
-        orElse: () => _servers.first,
-      );
     }
     
     notifyListeners();
@@ -81,19 +88,43 @@ class AppProvider extends ChangeNotifier {
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
     _userEmail = prefs.getString('user_email');
-    notifyListeners();
   }
 
-  // ✅ تحميل أسماء الملفات المحفوظة
   Future<void> _loadSavedFileNames() async {
     final prefs = await SharedPreferences.getInstance();
     _savedBotFileName = prefs.getString('saved_bot_file_name');
     _savedReqFileName = prefs.getString('saved_req_file_name');
+  }
+
+  // ✅ نستدعيها من HomeScreen بعد ما السيرفرات تتحمل
+  Future<void> loadSelectedServer() async {
+    if (_servers.isEmpty) return;
+    
+    final prefs = await SharedPreferences.getInstance();
+    final selectedServerName = prefs.getString('selected_server');
+    
+    if (selectedServerName != null) {
+      try {
+        _selectedServer = _servers.firstWhere(
+          (s) => s.name == selectedServerName,
+        );
+      } catch (_) {
+        _selectedServer = _servers.first;
+      }
+    } else {
+      _selectedServer = _servers.first;
+    }
+    
     notifyListeners();
   }
 
   Future<void> _saveBots() async {
     final prefs = await SharedPreferences.getInstance();
+    if (_myBots.isEmpty) {
+      await prefs.remove('saved_bots');
+      return;
+    }
+    
     final data = _myBots.map((b) => {
       'name': b.name,
       'serverName': b.serverName,
@@ -101,9 +132,9 @@ class AppProvider extends ChangeNotifier {
       'createdAt': b.createdAt.toIso8601String(),
     }).toList();
     await prefs.setString('saved_bots', jsonEncode(data));
+    print('💾 Saved ${_myBots.length} bots');
   }
 
-  // ✅ حفظ اسم الملف
   Future<void> saveFileNames({String? botFileName, String? reqFileName}) async {
     final prefs = await SharedPreferences.getInstance();
     if (botFileName != null) {
@@ -117,7 +148,6 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ✅ مسح أسماء الملفات
   Future<void> clearFileNames() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('saved_bot_file_name');
@@ -161,6 +191,7 @@ class AppProvider extends ChangeNotifier {
 
   void setServers(List<ServerModel> servers) {
     _servers = servers;
+    // ✅ نحدد السيرفر المختار بعد ما السيرفرات تيجي
     if (_selectedServer == null && servers.isNotEmpty) {
       _selectedServer = servers.first;
     }
@@ -208,6 +239,6 @@ class AppProvider extends ChangeNotifier {
   }
 
   List<BotModel> getBotsOnServer(String serverName) {
-    return _myBots.where((b) => b.name == serverName).toList();
+    return _myBots.where((b) => b.serverName == serverName).toList();
   }
 }
