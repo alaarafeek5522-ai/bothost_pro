@@ -9,8 +9,10 @@ import '../services/auth_service.dart';
 import '../services/telegram_service.dart';
 import '../services/update_service.dart';
 import '../models/bot_model.dart';
+import '../models/server_model.dart'; // ✅ أضف ده
 import 'logs_screen.dart';
 import 'login_screen.dart';
+
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
