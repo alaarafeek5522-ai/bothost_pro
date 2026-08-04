@@ -38,7 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
     await _loadUser();
     await _loadServers();
     await _checkUpdate();
-    await _syncBotStatus();
+    await _syncAllBotsStatus();
   }
 
   Future<void> _loadUser() async {
@@ -48,40 +48,40 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _syncBotStatus() async {
+  Future<void> _syncAllBotsStatus() async {
     final provider = context.read<AppProvider>();
-    if (provider.myBot == null || provider.servers.isEmpty) return;
+    if (provider.myBots.isEmpty || provider.servers.isEmpty) return;
 
     final user = await AuthService.getCurrentUser();
     if (user == null) return;
 
     setState(() => _isCheckingStatus = true);
 
-    try {
-      final server = provider.servers.firstWhere(
-        (s) => s.name == provider.myBot!.serverName,
-      );
-      
-      final status = await SSHService.checkBotStatus(
-        server, 
-        provider.myBot!.name, 
-        user.deviceId,
-      );
-      
-      final isRunning = status['isRunning'] as bool;
-      final dirExists = status['dirExists'] as bool;
-      
-      if (!dirExists) {
-        await AuthService.setBotStatus(false);
-        await provider.clearSavedBot();
-        _showStep('⚠️ البوت اتمسح من السيرفر');
-      } else if (!isRunning && provider.myBot!.status.contains('شغال')) {
-        provider.updateBotStatus('متوقف ⏹️ (الملفات موجودة)');
-      } else if (isRunning && !provider.myBot!.status.contains('شغال')) {
-        provider.updateBotStatus('شغال ✅');
+    for (final bot in provider.myBots) {
+      try {
+        final server = provider.servers.firstWhere(
+          (s) => s.name == bot.serverName,
+        );
+        
+        final status = await SSHService.checkBotStatus(
+          server, 
+          bot.name, 
+          user.deviceId,
+        );
+        
+        final isRunning = status['isRunning'] as bool;
+        final dirExists = status['dirExists'] as bool;
+        
+        if (!dirExists) {
+          provider.removeBot(bot.name);
+        } else if (!isRunning) {
+          provider.updateBotStatus(bot.name, 'متوقف ⏹️');
+        } else {
+          provider.updateBotStatus(bot.name, 'شغال ✅');
+        }
+      } catch (e) {
+        print('Sync error for ${bot.name}: $e');
       }
-    } catch (e) {
-      print('Sync error: $e');
     }
 
     setState(() => _isCheckingStatus = false);
@@ -203,8 +203,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final provider = context.read<AppProvider>();
     
-    if (provider.hasBot || provider.myBot != null) {
-      _showStep('❌ عندك بوت! احذف القديم الأول');
+    // ✅ نتأكد إن الاسم مش مستخدم قبل كده
+    if (provider.myBots.any((b) => b.name == botName)) {
+      _showStep('❌ اسم البوت ده مستخدم قبل كده');
+      return;
+    }
+
+    // ✅ نختار السيرفر
+    final server = provider.selectedServer;
+    if (server == null) {
+      _showStep('❌ اختار سيرفر الأول');
       return;
     }
 
@@ -213,12 +221,6 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _deploySteps = []);
 
     try {
-      final servers = provider.servers;
-      if (servers.isEmpty) {
-        throw Exception('مفيش سيرفرات متاحة');
-      }
-
-      final server = ServerService.getLeastLoadedServer(servers);
       _showStep('🎯 تم اختيار السيرفر: ${server.name}');
 
       final steps = await SSHService.deployBot(
@@ -237,28 +239,25 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       final finalStatus = steps['run'] ?? '✅ تم التشغيل';
-      final pid = finalStatus.contains('PID:') 
-          ? finalStatus.split('PID:').last.trim() 
-          : null;
       
-      await AuthService.setBotStatus(true);
-      
-      final currentUser = await AuthService.getCurrentUser();
-      if (currentUser != null) {
-        await AuthService.updateBotStatus(currentUser.deviceId, true);
-      }
-      
-      provider.setBot(
-        BotModel(
-          name: botName,
-          serverName: server.name,
-          status: 'شغال ✅',
-          createdAt: DateTime.now(),
-        ),
-        pid: pid,
-      );
+      provider.addBot(BotModel(
+        name: botName,
+        serverName: server.name,
+        status: 'شغال ✅',
+        createdAt: DateTime.now(),
+      ));
 
       _showStep('✅ البوت شغال بنجاح!');
+
+      // نمسح الـ form
+      setState(() {
+        _botFile = null;
+        _botFileName = '';
+        _reqFile = null;
+        _reqFileName = '';
+        _botNameController.clear();
+        _deploySteps = [];
+      });
 
     } catch (e) {
       _showStep('❌ فشل: $e');
@@ -273,30 +272,27 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.setLoading(false);
   }
 
-  Future<void> _restartBot() async {
+  Future<void> _restartBot(String botName) async {
     final provider = context.read<AppProvider>();
-    if (provider.myBot == null || provider.servers.isEmpty) return;
+    final bot = provider.myBots.firstWhere((b) => b.name == botName);
+    final server = provider.servers.firstWhere((s) => s.name == bot.serverName);
 
     final user = await AuthService.getCurrentUser();
     if (user == null) return;
 
     provider.setLoading(true);
-    _showStep('🔄 جاري إعادة تشغيل البوت...');
+    _showStep('🔄 جاري إعادة تشغيل $botName...');
 
     try {
-      final server = provider.servers.firstWhere(
-        (s) => s.name == provider.myBot!.serverName,
-      );
-      
       final pid = await SSHService.restartBot(
         server, 
-        provider.myBot!.name,
+        botName,
         'bot.py',
         user.deviceId,
       );
       
       _showStep('✅ تم إعادة التشغيل! PID: $pid');
-      provider.updateBotStatus('شغال ✅ (تم إعادة التشغيل)', pid: pid);
+      provider.updateBotStatus(botName, 'شغال ✅ (تم إعادة التشغيل)');
     } catch (e) {
       _showStep('❌ فشل إعادة التشغيل: $e');
     }
@@ -304,9 +300,10 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.setLoading(false);
   }
 
-  Future<void> _stopBotOnly() async {
+  Future<void> _stopBot(String botName) async {
     final provider = context.read<AppProvider>();
-    if (provider.myBot == null || provider.servers.isEmpty) return;
+    final bot = provider.myBots.firstWhere((b) => b.name == botName);
+    final server = provider.servers.firstWhere((s) => s.name == bot.serverName);
 
     final user = await AuthService.getCurrentUser();
     if (user == null) return;
@@ -314,18 +311,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.stop_circle, color: Color(0xFFFFA726)),
-            SizedBox(width: 10),
-            Text('⏹️ إيقاف البوت'),
-          ],
-        ),
-        content: const Text(
-          'هيتم إيقاف البوت مؤقتاً.\n\n'
-          'الملفات هتفضل موجودة على السيرفر.\n'
-          'تقدر تشغله تاني لاحقاً.',
-        ),
+        title: const Text('⏹️ إيقاف البوت'),
+        content: Text('هيتم إيقاف $botName مؤقتاً.\nالملفات هتفضل موجودة.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -343,24 +330,16 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirm != true) return;
 
     provider.setLoading(true);
-    _showStep('⏹️ جاري إيقاف البوت...');
+    _showStep('⏹️ جاري إيقاف $botName...');
 
     try {
-      final server = provider.servers.firstWhere(
-        (s) => s.name == provider.myBot!.serverName,
-      );
-      
-      final stopped = await SSHService.stopBot(
-        server, 
-        provider.myBot!.name, 
-        user.deviceId,
-      );
+      final stopped = await SSHService.stopBot(server, botName, user.deviceId);
       
       if (stopped) {
-        _showStep('✅ تم إيقاف البوت');
-        provider.updateBotStatus('متوقف ⏹️ (الملفات موجودة)');
+        _showStep('✅ تم إيقاف $botName');
+        provider.updateBotStatus(botName, 'متوقف ⏹️ (الملفات موجودة)');
       } else {
-        _showStep('⚠️ البوت متوقف بالفعل');
+        _showStep('⚠️ $botName متوقف بالفعل');
       }
     } catch (e) {
       _showStep('❌ فشل الإيقاف: $e');
@@ -369,9 +348,10 @@ class _HomeScreenState extends State<HomeScreen> {
     provider.setLoading(false);
   }
 
-  Future<void> _deleteBotForever() async {
+  Future<void> _deleteBot(String botName) async {
     final provider = context.read<AppProvider>();
-    if (provider.myBot == null || provider.servers.isEmpty) return;
+    final bot = provider.myBots.firstWhere((b) => b.name == botName);
+    final server = provider.servers.firstWhere((s) => s.name == bot.serverName);
 
     final user = await AuthService.getCurrentUser();
     if (user == null) return;
@@ -379,18 +359,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.delete_forever, color: Color(0xFFE94560)),
-            SizedBox(width: 10),
-            Text('🗑️ حذف نهائي'),
-          ],
-        ),
-        content: const Text(
+        title: const Text('🗑️ حذف نهائي'),
+        content: Text(
           '⚠️ الحذف نهائي ولا يمكن التراجع!\n\n'
-          '1. البوت هيتوقف\n'
-          '2. الملفات هتمسح من السيرفر\n'
-          '3. هتقدر ترفع بوت جديد\n\n'
+          'البوت: $botName\n'
+          'السيرفر: ${server.name}\n\n'
           'متأكد؟',
         ),
         actions: [
@@ -410,41 +383,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (confirm != true) return;
 
     provider.setLoading(true);
-    _showStep('🗑️ جاري الحذف النهائي...');
+    _showStep('🗑️ جاري حذف $botName...');
 
     try {
-      final server = provider.servers.firstWhere(
-        (s) => s.name == provider.myBot!.serverName,
-      );
-      
-      final deleted = await SSHService.deleteBotFromServer(
-        server, 
-        provider.myBot!.name, 
-        user.deviceId,
-      );
+      final deleted = await SSHService.deleteBotFromServer(server, botName, user.deviceId);
       
       if (!deleted) {
         throw Exception('فشل حذف الملفات من السيرفر');
       }
 
-      await AuthService.setBotStatus(false);
-      
-      final currentUser = await AuthService.getCurrentUser();
-      if (currentUser != null) {
-        await AuthService.updateBotStatus(currentUser.deviceId, false);
-      }
-      
-      await provider.clearSavedBot();
-      _showStep('✅ تم الحذف النهائي!');
-
-      setState(() {
-        _botFile = null;
-        _botFileName = '';
-        _reqFile = null;
-        _reqFileName = '';
-        _botNameController.clear();
-        _deploySteps = [];
-      });
+      provider.removeBot(botName);
+      _showStep('✅ تم حذف $botName!');
 
     } catch (e) {
       _showStep('❌ فشل الحذف: $e');
@@ -454,8 +403,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _forceSync() async {
-    _showStep('🔄 جاري التحقق من حالة البوت...');
-    await _syncBotStatus();
+    _showStep('🔄 جاري التحقق من حالة البوتات...');
+    await _syncAllBotsStatus();
     _showStep('✅ تم التحقق');
   }
 
@@ -534,7 +483,7 @@ class _HomeScreenState extends State<HomeScreen> {
           drawer: _buildDrawer(provider),
           body: SafeArea(
             child: RefreshIndicator(
-              onRefresh: _syncBotStatus,
+              onRefresh: _syncAllBotsStatus,
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(20),
@@ -544,10 +493,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     _buildHeader(provider),
                     const SizedBox(height: 25),
 
-                    if (provider.hasBot || provider.myBot != null)
-                      _buildBotCard(provider),
+                    if (provider.myBots.isNotEmpty)
+                      ...provider.myBots.map((bot) => Padding(
+                        padding: const EdgeInsets.only(bottom: 15),
+                        child: _buildBotCard(provider, bot),
+                      )),
                     
-                    if (!provider.hasBot && provider.myBot == null)
+                    if (provider.myBots.isEmpty)
                       _buildDeployForm(provider),
 
                     const SizedBox(height: 20),
@@ -617,8 +569,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildBotCard(AppProvider provider) {
-    final isRunning = provider.myBot?.status.contains('شغال') ?? false;
+  Widget _buildBotCard(AppProvider provider, BotModel bot) {
+    final isRunning = bot.status.contains('شغال');
     
     return Container(
       padding: const EdgeInsets.all(20),
@@ -659,69 +611,64 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  isRunning ? 'البوت شغال 🟢' : 'البوت متوقف 🟡',
+                  bot.name,
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         color: isRunning ? const Color(0xFF00BFA6) : const Color(0xFFFFA726),
                         fontWeight: FontWeight.bold,
                       ),
                 ),
               ),
-              if (provider.botPid != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    'PID: ${provider.botPid}',
-                    style: const TextStyle(fontSize: 11, color: Colors.white70),
-                  ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
+                child: Text(
+                  bot.serverName,
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+              ),
             ],
           ),
           const Divider(color: Colors.white24, height: 25),
           
-          if (provider.myBot != null) ...[
-            _buildInfoRow('الاسم:', provider.myBot!.name),
-            _buildInfoRow('السيرفر:', provider.myBot!.serverName),
-            _buildInfoRow('الحالة:', provider.myBot!.status),
-            _buildInfoRow('التاريخ:', provider.myBot!.createdAt.toString().substring(0, 16)),
-          ],
+          _buildInfoRow('الحالة:', bot.status),
+          _buildInfoRow('التاريخ:', bot.createdAt.toString().substring(0, 16)),
           
-          const SizedBox(height: 20),
+          const SizedBox(height: 15),
           
           Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               if (!isRunning)
                 ElevatedButton.icon(
-                  onPressed: provider.isLoading ? null : _restartBot,
-                  icon: const Icon(Icons.play_arrow, size: 18),
-                  label: const Text('تشغيل'),
+                  onPressed: provider.isLoading ? null : () => _restartBot(bot.name),
+                  icon: const Icon(Icons.play_arrow, size: 16),
+                  label: const Text('تشغيل', style: TextStyle(fontSize: 12)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF00BFA6),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
                 ),
               if (isRunning)
                 ElevatedButton.icon(
-                  onPressed: provider.isLoading ? null : _stopBotOnly,
-                  icon: const Icon(Icons.stop, size: 18),
-                  label: const Text('إيقاف'),
+                  onPressed: provider.isLoading ? null : () => _stopBot(bot.name),
+                  icon: const Icon(Icons.stop, size: 16),
+                  label: const Text('إيقاف', style: TextStyle(fontSize: 12)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFFFA726),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
                 ),
               ElevatedButton.icon(
-                onPressed: provider.isLoading ? null : _restartBot,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('إعادة تشغيل'),
+                onPressed: provider.isLoading ? null : () => _restartBot(bot.name),
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('إعادة', style: TextStyle(fontSize: 12)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF6C63FF),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
               ),
               OutlinedButton.icon(
@@ -729,16 +676,19 @@ class _HomeScreenState extends State<HomeScreen> {
                   context,
                   MaterialPageRoute(builder: (_) => const LogsScreen()),
                 ),
-                icon: const Icon(Icons.terminal, size: 18),
-                label: const Text('السجلات'),
+                icon: const Icon(Icons.terminal, size: 16),
+                label: const Text('لوجز', style: TextStyle(fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                ),
               ),
               ElevatedButton.icon(
-                onPressed: provider.isLoading ? null : _deleteBotForever,
-                icon: const Icon(Icons.delete_forever, size: 18),
-                label: const Text('حذف'),
+                onPressed: provider.isLoading ? null : () => _deleteBot(bot.name),
+                icon: const Icon(Icons.delete_forever, size: 16),
+                label: const Text('حذف', style: TextStyle(fontSize: 12)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFE94560),
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 ),
               ),
             ],
@@ -752,6 +702,55 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // ✅ اختيار السيرفر
+        if (provider.servers.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              color: const Color(0xFF16213E),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF6C63FF).withOpacity(0.5)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.dns, color: Color(0xFF6C63FF), size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'اختر السيرفر:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF6C63FF),
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ...provider.servers.map((server) => RadioListTile<ServerModel>(
+                  title: Text(
+                    server.displayName,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    '${server.botCount} بوت | Load: ${server.loadScore.toStringAsFixed(1)}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                  value: server,
+                  groupValue: provider.selectedServer,
+                  activeColor: const Color(0xFF00BFA6),
+                  onChanged: (value) {
+                    provider.setSelectedServer(value);
+                  },
+                )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 15),
+        ],
+
         TextField(
           controller: _botNameController,
           decoration: InputDecoration(
@@ -895,7 +894,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const Icon(Icons.dns, size: 18, color: Colors.white70),
           const SizedBox(width: 8),
           Text(
-            '${provider.servers.length} سيرفر متاح',
+            '${provider.servers.length} سيرفر متاح | ${provider.myBots.length} بوت',
             style: const TextStyle(color: Colors.white70),
           ),
           const SizedBox(width: 15),
@@ -981,7 +980,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 10),
                     const Text('📢 قناة التليجرام: @ahrgq'),
                     const SizedBox(height: 5),
-                    const Text('🔒 كل حساب = بوت واحد'),
+                    const Text('🔒 كل حساب = بوتات متعددة'),
                     const SizedBox(height: 5),
                     const Text('📱 جهاز واحد = حساب واحد'),
                   ],

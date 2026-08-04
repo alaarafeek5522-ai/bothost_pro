@@ -13,7 +13,7 @@ class SSHService {
     
     if (_clients.containsKey(key)) {
       try {
-        final test = await _clients[key]!.execute('echo PING');
+        final test = await _clients[key]!.execute('echo PING').timeout(const Duration(seconds: 5));
         await test.done;
         _lastUsed[key] = DateTime.now();
         return _clients[key]!;
@@ -24,7 +24,7 @@ class SSHService {
     }
 
     final socket = await SSHSocket.connect(server.host, server.port)
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 15));
     final client = SSHClient(
       socket,
       username: server.user,
@@ -44,12 +44,32 @@ class SSHService {
     _lastUsed.clear();
   }
 
-  static Future<String> _readStream(Stream<Uint8List> stream) async {
+  static Future<String> _readStream(Stream<Uint8List> stream, {Duration timeout = const Duration(seconds: 30)}) async {
     final bytes = <int>[];
-    await for (final chunk in stream) {
-      bytes.addAll(chunk);
-    }
-    return utf8.decode(bytes);
+    final completer = Completer<String>();
+    
+    final subscription = stream.listen(
+      (chunk) => bytes.addAll(chunk),
+      onDone: () {
+        if (!completer.isCompleted) {
+          completer.complete(utf8.decode(bytes));
+        }
+      },
+      onError: (e) {
+        if (!completer.isCompleted) {
+          completer.completeError(e);
+        }
+      },
+    );
+
+    Timer(timeout, () {
+      if (!completer.isCompleted) {
+        subscription.cancel();
+        completer.complete(utf8.decode(bytes));
+      }
+    });
+
+    return completer.future;
   }
 
   static Future<void> _ensurePip(SSHClient client) async {
@@ -65,7 +85,7 @@ class SSHService {
       (python3 -m ensurepip --upgrade 2>/dev/null && echo "PIP_OK") ||
       echo "PIP_FAILED"
     ''');
-    final installOutput = await _readStream(installPip.stdout);
+    final installOutput = await _readStream(installPip.stdout, timeout: const Duration(seconds: 60));
     await installPip.done;
 
     if (installOutput.contains('PIP_FAILED')) {
@@ -86,26 +106,27 @@ class SSHService {
 
     try {
       steps['connect'] = '🔄 جاري الاتصال بالسيرفر...';
-      client = await _connect(server).timeout(const Duration(seconds: 15));
+      client = await _connect(server).timeout(const Duration(seconds: 20));
       steps['connect'] = '✅ تم الاتصال بالسيرفر';
 
       steps['pip'] = '🔄 جاري التأكد من pip...';
       await _ensurePip(client);
       steps['pip'] = '✅ pip جاهز';
 
-      final sftp = await client.sftp().timeout(const Duration(seconds: 10));
+      final sftp = await client.sftp().timeout(const Duration(seconds: 15));
 
+      // ✅ كل بوت في مجلد منفصل: userId/botName
       final userDir = '/root/bots/user_$userId';
       final botDir = '$userDir/$botName';
 
-      steps['clean'] = '🔄 جاري تنظيف المجلد...';
-      final cleanResult = await client.execute('rm -rf $botDir && mkdir -p $botDir && chmod 700 $userDir && echo "CLEAN_OK"');
+      steps['clean'] = '🔄 جاري إعداد المجلد...';
+      final cleanResult = await client.execute('mkdir -p $botDir && chmod 700 $userDir && echo "OK"');
       final cleanOutput = await _readStream(cleanResult.stdout);
       await cleanResult.done;
-      if (!cleanOutput.contains('CLEAN_OK')) {
-        throw Exception('فشل تنظيف المجلد');
+      if (!cleanOutput.contains('OK')) {
+        throw Exception('فشل إنشاء المجلد');
       }
-      steps['clean'] = '✅ تم تنظيف المجلد';
+      steps['clean'] = '✅ تم إعداد المجلد';
 
       steps['upload_bot'] = '🔄 جاري رفع bot.py...';
       final botRemote = await sftp.open(
@@ -139,8 +160,8 @@ class SSHService {
       ''';
       
       final installResult = await client.execute(installCmd);
-      final installOutput = await _readStream(installResult.stdout);
-      final installError = await _readStream(installResult.stderr);
+      final installOutput = await _readStream(installResult.stdout, timeout: const Duration(seconds: 120));
+      final installError = await _readStream(installResult.stderr, timeout: const Duration(seconds: 30));
       await installResult.done;
 
       final fullInstallLog = 'STDOUT:\\n$installOutput\\n\\nSTDERR:\\n$installError';
@@ -164,31 +185,39 @@ class SSHService {
       }
       steps['check'] = '✅ المكتبات جاهزة';
 
+      // ✅ نقتل أي process قديم بنفس المسار (مش بنفس الاسم عشان ماتقتلش بوتات تانية)
       steps['run'] = '🔄 جاري تشغيل البوت...';
-      await client.execute('pkill -9 -f "$botDir" 2>/dev/null || true');
-      await Future.delayed(const Duration(seconds: 1));
+      await client.execute('pkill -9 -f "$botDir/$botFileName" 2>/dev/null || true');
+      await Future.delayed(const Duration(seconds: 2));
       
-      // ✅ raw string - Dart ما بيعتبرش $ فيها
-      final runResult = await client.execute(
-        r'cd ' + botDir + r' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!'
-      );
-      final runOutput = await _readStream(runResult.stdout);
+      // ✅ نستخدم screen عشان الـ process يفضل شغال حتى لو الـ SSH قفل
+      final runCmd = '''
+        cd $botDir && 
+        (screen -dmS ${botName}_bot python3 $botFileName > bot.log 2>&1) && 
+        sleep 1 && 
+        ps aux | grep "$botDir/$botFileName" | grep -v grep | awk '{print \$2}' | head -1
+      ''';
+      
+      final runResult = await client.execute(runCmd);
+      final runOutput = await _readStream(runResult.stdout, timeout: const Duration(seconds: 15));
       await runResult.done;
       
       final pid = runOutput.trim();
       if (pid.isEmpty || int.tryParse(pid) == null) {
-        final psResult = await client.execute('ps aux | grep "$botFileName" | grep -v grep | awk \'{print \$2}\' | head -1');
-        final psOutput = await _readStream(psResult.stdout);
-        await psResult.done;
+        // محاولة تانية بدون screen
+        final fallbackCmd = r'cd ' + botDir + r' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!';
+        final fallbackResult = await client.execute(fallbackCmd);
+        final fallbackOutput = await _readStream(fallbackResult.stdout);
+        await fallbackResult.done;
         
-        final altPid = psOutput.trim();
-        if (altPid.isEmpty || int.tryParse(altPid) == null) {
+        final fallbackPid = fallbackOutput.trim();
+        if (fallbackPid.isEmpty || int.tryParse(fallbackPid) == null) {
           steps['run'] = '❌ فشل تشغيل البوت';
           throw Exception('فشل تشغيل البوت - مفيش PID');
         }
-        steps['run'] = '✅ البوت شغال! PID: $altPid';
+        steps['run'] = '✅ البوت شغال! PID: $fallbackPid';
       } else {
-        steps['run'] = '✅ البوت شغال! PID: $pid';
+        steps['run'] = '✅ البوت شغال! PID: $pid (screen)';
       }
 
     } catch (e) {
@@ -202,22 +231,21 @@ class SSHService {
   static Future<bool> stopBot(ServerModel server, String botName, String userId) async {
     SSHClient? client;
     try {
-      client = await _connect(server).timeout(const Duration(seconds: 10));
+      client = await _connect(server).timeout(const Duration(seconds: 15));
       final botDir = '/root/bots/user_$userId/$botName';
       
       final result = await client.execute('''
         echo "=== STOPPING BOT ==="
-        pkill -9 -f "$botDir" 2>/dev/null || true
+        # اقتل الـ screen session
+        screen -S ${botName}_bot -X quit 2>/dev/null || true
+        # اقتل بالمسار المحدد
+        pkill -9 -f "$botDir/bot.py" 2>/dev/null || true
         sleep 2
-        for pid in \$(ps aux | grep "$botDir" | grep -v grep | awk '{print \$2}'); do
-          echo "Killing PID: \$pid"
-          kill -9 \$pid 2>/dev/null || true
-        done
-        sleep 1
-        ps aux | grep "$botDir" | grep -v grep || echo "STOPPED"
+        # تأكد
+        ps aux | grep "$botDir/bot.py" | grep -v grep || echo "STOPPED"
       ''');
       
-      final output = await _readStream(result.stdout);
+      final output = await _readStream(result.stdout, timeout: const Duration(seconds: 15));
       await result.done;
       
       return output.contains('STOPPED');
@@ -229,11 +257,11 @@ class SSHService {
 
   static Future<bool> deleteBotFromServer(ServerModel server, String botName, String userId) async {
     await stopBot(server, botName, userId);
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(seconds: 3));
     
     SSHClient? client;
     try {
-      client = await _connect(server).timeout(const Duration(seconds: 10));
+      client = await _connect(server).timeout(const Duration(seconds: 15));
       final botDir = '/root/bots/user_$userId/$botName';
       
       final result = await client.execute('''
@@ -255,7 +283,7 @@ class SSHService {
   static Future<String> getLogs(ServerModel server, String botName, String userId) async {
     SSHClient? client;
     try {
-      client = await _connect(server).timeout(const Duration(seconds: 10));
+      client = await _connect(server).timeout(const Duration(seconds: 15));
       final botDir = '/root/bots/user_$userId/$botName';
       
       final result = await client.execute('''
@@ -263,16 +291,16 @@ class SSHService {
         cat $botDir/bot.log 2>&1 || echo "No logs yet" &&
         echo "" &&
         echo "=== PROCESS STATUS ===" &&
-        ps aux | grep "$botDir" | grep -v grep || echo "Bot process not found" &&
+        ps aux | grep "$botDir/bot.py" | grep -v grep || echo "Bot process not found" &&
+        echo "" &&
+        echo "=== SCREEN SESSIONS ===" &&
+        screen -ls | grep ${botName}_bot || echo "No screen session" &&
         echo "" &&
         echo "=== DISK USAGE ===" &&
-        du -sh $botDir 2>/dev/null || echo "N/A" &&
-        echo "" &&
-        echo "=== BOT STATUS ===" &&
-        if [ -f "$botDir/bot.py" ]; then echo "FILES_EXIST"; else echo "NO_FILES"; fi
+        du -sh $botDir 2>/dev/null || echo "N/A"
       ''');
       
-      final output = await _readStream(result.stdout);
+      final output = await _readStream(result.stdout, timeout: const Duration(seconds: 20));
       await result.done;
       return output;
     } catch (e) {
@@ -282,11 +310,11 @@ class SSHService {
 
   static Future<String> restartBot(ServerModel server, String botName, String botFileName, String userId) async {
     await stopBot(server, botName, userId);
-    await Future.delayed(const Duration(seconds: 2));
+    await Future.delayed(const Duration(seconds: 3));
     
     SSHClient? client;
     try {
-      client = await _connect(server).timeout(const Duration(seconds: 10));
+      client = await _connect(server).timeout(const Duration(seconds: 15));
       final botDir = '/root/bots/user_$userId/$botName';
       
       final checkResult = await client.execute('ls $botDir/$botFileName 2>/dev/null && echo "EXISTS" || echo "MISSING"');
@@ -297,11 +325,15 @@ class SSHService {
         throw Exception('ملف البوت مش موجود على السيرفر');
       }
       
-      // ✅ raw string - Dart ما بيعتبرش $ فيها
-      final result = await client.execute(
-        r'cd ' + botDir + r' && nohup python3 ' + botFileName + r' > bot.log 2>&1 & echo $!'
-      );
-      final output = await _readStream(result.stdout);
+      final runCmd = '''
+        cd $botDir && 
+        (screen -dmS ${botName}_bot python3 $botFileName > bot.log 2>&1) && 
+        sleep 1 && 
+        ps aux | grep "$botDir/$botFileName" | grep -v grep | awk '{print \$2}' | head -1
+      ''';
+      
+      final result = await client.execute(runCmd);
+      final output = await _readStream(result.stdout, timeout: const Duration(seconds: 15));
       await result.done;
       
       final pid = output.trim();
@@ -317,40 +349,58 @@ class SSHService {
   static Future<Map<String, dynamic>> checkBotStatus(ServerModel server, String botName, String userId) async {
     SSHClient? client;
     try {
-      client = await _connect(server).timeout(const Duration(seconds: 10));
+      client = await _connect(server).timeout(const Duration(seconds: 15));
       final botDir = '/root/bots/user_$userId/$botName';
       
       final result = await client.execute('''
         echo "=== CHECK ==="
-        ps aux | grep "$botDir" | grep -v grep | wc -l
+        ps aux | grep "$botDir/bot.py" | grep -v grep | wc -l
+        echo "---"
+        screen -ls | grep ${botName}_bot | wc -l
         echo "---"
         ls -la $botDir 2>/dev/null && echo "DIR_EXISTS" || echo "NO_DIR"
         echo "---"
         cat $botDir/bot.log 2>/dev/null | tail -5 || echo "NO_LOG"
       ''');
       
-      final output = await _readStream(result.stdout);
+      final output = await _readStream(result.stdout, timeout: const Duration(seconds: 15));
       await result.done;
       
       final lines = output.split('\n');
       int processCount = 0;
+      int screenCount = 0;
       bool dirExists = false;
       String lastLog = '';
+      int section = 0;
       
       for (final line in lines) {
-        if (int.tryParse(line.trim()) != null) {
-          processCount = int.parse(line.trim());
-        } else if (line.contains('DIR_EXISTS')) {
+        if (line.contains('=== CHECK ===')) {
+          section = 1;
+          continue;
+        } else if (line.contains('---')) {
+          section++;
+          continue;
+        }
+        
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        
+        if (section == 1 && int.tryParse(trimmed) != null) {
+          processCount = int.parse(trimmed);
+        } else if (section == 2 && int.tryParse(trimmed) != null) {
+          screenCount = int.parse(trimmed);
+        } else if (section == 3 && trimmed.contains('DIR_EXISTS')) {
           dirExists = true;
-        } else if (!line.startsWith('===') && !line.startsWith('---') && line.trim().isNotEmpty) {
-          lastLog = line;
+        } else if (section == 4 && !trimmed.contains('NO_LOG')) {
+          lastLog = trimmed;
         }
       }
       
       return {
-        'isRunning': processCount > 0,
+        'isRunning': processCount > 0 || screenCount > 0,
         'dirExists': dirExists,
         'processCount': processCount,
+        'screenCount': screenCount,
         'lastLog': lastLog,
       };
     } catch (e) {
@@ -358,6 +408,7 @@ class SSHService {
         'isRunning': false,
         'dirExists': false,
         'processCount': 0,
+        'screenCount': 0,
         'lastLog': 'Error: $e',
       };
     }

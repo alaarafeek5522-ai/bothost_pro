@@ -6,6 +6,9 @@ class ServerModel {
   final String user;
   final String password;
   final int botCount;
+  final double? cpuUsage;
+  final double? memoryUsage;
+  final String? region;
 
   ServerModel({
     required this.id,
@@ -14,7 +17,10 @@ class ServerModel {
     required this.port,
     required this.user,
     required this.password,
-    required this.botCount,
+    this.botCount = 0,
+    this.cpuUsage,
+    this.memoryUsage,
+    this.region,
   });
 
   factory ServerModel.fromJson(Map<String, dynamic> json) {
@@ -26,6 +32,19 @@ class ServerModel {
       user: json['user'],
       password: json['password'],
       botCount: json['botCount'] ?? 0,
+      cpuUsage: json['cpuUsage']?.toDouble(),
+      memoryUsage: json['memoryUsage']?.toDouble(),
+      region: json['region'],
     );
   }
+
+  // حساب score — الأقل = الأفضل
+  double get loadScore {
+    double score = botCount * 10;
+    if (cpuUsage != null) score += cpuUsage!;
+    if (memoryUsage != null) score += memoryUsage! / 2;
+    return score;
+  }
+
+  String get displayName => '$name ${region != null ? '($region)' : ''}';
 }
