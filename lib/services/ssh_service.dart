@@ -175,8 +175,9 @@ class SSHService {
       await client.execute('pkill -9 -f "$botDir" 2>/dev/null || true');
       await Future.delayed(const Duration(seconds: 1));
       
+      // ✅ هربنا الـ $ بـ \$
       final runResult = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo $!'
+        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
       );
       final runOutput = await _readStream(runResult.stdout);
       await runResult.done;
@@ -303,8 +304,9 @@ class SSHService {
         throw Exception('ملف البوت مش موجود على السيرفر');
       }
       
+      // ✅ هربنا الـ $ بـ \$
       final result = await client.execute(
-        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo $!'
+        'cd $botDir && nohup python3 $botFileName > bot.log 2>&1 & echo \\$!'
       );
       final output = await _readStream(result.stdout);
       await result.done;
