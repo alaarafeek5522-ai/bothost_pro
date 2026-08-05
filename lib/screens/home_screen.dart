@@ -37,13 +37,15 @@ class _HomeScreenState extends State<HomeScreen> {
     _initScreen();
   }
 
-  Future<void> _initScreen() async {
+    Future<void> _initScreen() async {
     await _loadUser();
     await _loadServers();
+    await context.read<AppProvider>().loadSelectedServer();
     await _checkUpdate();
     await _syncAllBotsStatus();
-    await _loadSavedFiles(); // ✅
+    await _loadSavedFiles();
   }
+
 
   // ✅ تحميل الملفات المحفوظة محلياً
   Future<void> _loadSavedFiles() async {
