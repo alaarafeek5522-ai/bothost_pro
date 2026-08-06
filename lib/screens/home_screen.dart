@@ -91,27 +91,37 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() => _isCheckingStatus = true);
 
-    for (final bot in provider.myBots) {
+    // ✅ نسخة ثابتة من القايمة عشان مانلفش على قايمة بتتغير أثناء اللوب
+    final botsSnapshot = List.of(provider.myBots);
+
+    try {
+    for (final bot in botsSnapshot) {
       try {
         final server = provider.servers.firstWhere(
           (s) => s.name == bot.serverName,
         );
-        
+
+        // ✅ تايم أوت شامل على الفحص كله عشان اللف مايعلقش لو السيرفر مش راد
         final status = await SSHService.checkBotStatus(
-          server, 
-          bot.name, 
+          server,
+          bot.name,
           user.deviceId,
+        ).timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => {
+            'isRunning': false,
+            'dirExists': false,
+            'checkFailed': true,
+          },
         );
-        
+
         final isRunning = status['isRunning'] as bool;
-        final dirExists = status['dirExists'] as bool;
         final checkFailed = status['checkFailed'] as bool? ?? false;
 
+        // ✅ المزامنة التلقائية بتحدّث الحالة بس، مبتمسحش البوت أبداً.
+        // الحذف الحقيقي بيحصل فقط من زرار الحذف اليدوي (_deleteBot).
         if (checkFailed) {
-          // فشل الفحص نفسه (نت/تايم أوت) - سيبي حالة البوت زي ما هي، متمسحيهوش
-          continue;
-        } else if (!dirExists) {
-          provider.removeBot(bot.name);
+          provider.updateBotStatus(bot.name, 'غير معروف ⚠️ (تعذر الاتصال)');
         } else if (!isRunning) {
           provider.updateBotStatus(bot.name, 'متوقف ⏹️');
         } else {
@@ -121,8 +131,9 @@ class _HomeScreenState extends State<HomeScreen> {
         print('Sync error for ${bot.name}: $e');
       }
     }
-
-    setState(() => _isCheckingStatus = false);
+    } finally {
+      if (mounted) setState(() => _isCheckingStatus = false);
+    }
   }
 
   Future<void> _loadServers() async {
