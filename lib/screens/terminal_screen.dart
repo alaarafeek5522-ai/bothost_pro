@@ -259,6 +259,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                       _buildQuickCommand('htop', 'htop'),
                       _buildQuickCommand('df -h', 'مساحة'),
                       _buildQuickCommand('ps aux', 'processes'),
+                      _buildQuickCommand('exit', 'خروج'),
                     ],
                   ),
                 ),
@@ -281,7 +282,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
         text.contains('Error') ||
         text.contains('error') ||
         text.contains('FAILED') ||
-        text.contains('failed')) {
+        text.contains('failed') ||
+        text.contains('NameError') ||
+        text.contains('SyntaxError')) {
       textColor = AppTheme.terminalRed;
     } else if (text.startsWith('✅') ||
         text.contains('OK') ||
@@ -294,7 +297,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
       textColor = AppTheme.terminalYellow;
     } else if (text.contains('http') || text.contains('https')) {
       textColor = AppTheme.terminalBlue;
-    } else if (text.startsWith('drwx') || text.startsWith('-rw')) {
+    } else if (text.startsWith('drwx') || text.startsWith('-rw') || text.startsWith('total')) {
       textColor = const Color(0xFF79C0FF);
     }
 

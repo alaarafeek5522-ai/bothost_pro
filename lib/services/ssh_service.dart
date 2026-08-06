@@ -67,7 +67,7 @@ class SSHService {
     final setupResult = await client.execute('mkdir -p $userDir && cd $userDir && pwd');
     await setupResult.done;
 
-    // نبدأ shell session
+    // ✅ نفتح bash shell صراحة
     final session = await client.shell(
       pty: const SSHPtyConfig(
         width: 120,
@@ -77,8 +77,12 @@ class SSHService {
 
     _sessions[key] = session;
 
-    // نروح للمجلد بتاع المستخدم
-    session.stdin.add(utf8.encode('cd $userDir && clear && echo "=== Terminal Ready ===" && pwd\n'));
+    // ✅ نبعت bash command عشان نتأكد إننا في bash مش python
+    session.stdin.add(utf8.encode('bash\n'));
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    // نروح للمجلد بتاع المستخدم ونمسح الشاشة
+    session.stdin.add(utf8.encode('cd $userDir && clear && echo "=== Terminal SSH Pro ===" && echo "Directory: \$(pwd)" && echo "" && PS1="\\u@\\h:\\w\\$ "\n'));
 
     final controller = StreamController<String>.broadcast();
     _outputControllers[key] = controller;
@@ -188,7 +192,7 @@ class SSHService {
       final lines = output.split('\n').where((l) => l.trim().isNotEmpty).toList();
       final files = <FileInfo>[];
 
-      for (final line in lines.skip(1)) { // skip total
+      for (final line in lines.skip(1)) {
         final parts = line.split(RegExp(r'\s+'));
         if (parts.length < 9) continue;
 

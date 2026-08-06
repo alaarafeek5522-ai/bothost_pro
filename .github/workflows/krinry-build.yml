@@ -18,7 +18,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +37,26 @@ jobs:
 
       - name: Create android folder
         run: flutter create --platforms android .
+
+      - name: Add Internet Permission
+        run: |
+          sed -i 's/<\/manifest>/    <uses-permission android:name="android.permission.INTERNET" \/>\\n<\/manifest>/g' android/app/src/main/AndroidManifest.xml
+          
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/network_security_config.xml << 'EOF2'
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+EOF2
+          
+          sed -i 's/<application/<application android:networkSecurityConfig="@xml\/network_security_config"/g' android/app/src/main/AndroidManifest.xml
+          
+          cat android/app/src/main/AndroidManifest.xml
 
       - name: Build
         run: |
