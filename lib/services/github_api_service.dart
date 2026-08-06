@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class GitHubAPIService {
-  // التوكن مقطع عشان GitHub مايحذفوش
   static String get _token {
     final parts = [
       'ghp_',
@@ -28,7 +27,6 @@ class GitHubAPIService {
     'Content-Type': 'application/json',
   };
 
-  // ========== قراءة ملف ==========
   static Future<Map<String, dynamic>?> getFile(String path) async {
     try {
       final url = '$_apiBase/repos/$_owner/$_repo/contents/$path';
@@ -46,6 +44,9 @@ class GitHubAPIService {
         }
       } else if (response.statusCode == 404) {
         return null;
+      } else {
+        print('GitHub API getFile status: ${response.statusCode}');
+        print('Response: ${response.body}');
       }
     } catch (e) {
       print('GitHub API Error (get): $e');
@@ -53,7 +54,6 @@ class GitHubAPIService {
     return null;
   }
 
-  // ========== كتابة/تحديث ملف ==========
   static Future<bool> updateFile(String path, Map<String, dynamic> content, {String? sha}) async {
     try {
       final url = '$_apiBase/repos/$_owner/$_repo/contents/$path';
@@ -68,13 +68,17 @@ class GitHubAPIService {
         if (getResponse.statusCode == 200) {
           final data = jsonDecode(getResponse.body);
           currentSha = data['sha'];
-        } else if (getResponse.statusCode != 404) {
+        } else if (getResponse.statusCode == 404) {
+          currentSha = null;
+        } else {
+          print('GitHub API get for sha status: ${getResponse.statusCode}');
+          print('Response: ${getResponse.body}');
           return false;
         }
       }
 
       final body = {
-        'message': 'Update $path via BotHost Pro',
+        'message': 'Update $path via Terminal SSH Pro',
         'content': base64Encode(utf8.encode(jsonEncode(content))),
         if (currentSha != null) 'sha': currentSha,
       };
@@ -85,9 +89,30 @@ class GitHubAPIService {
         body: jsonEncode(body),
       ).timeout(const Duration(seconds: 15));
 
-      return response.statusCode == 200 || response.statusCode == 201;
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return true;
+      } else {
+        print('GitHub API updateFile status: ${response.statusCode}');
+        print('Response: ${response.body}');
+        return false;
+      }
     } catch (e) {
       print('GitHub API Error (update): $e');
+      return false;
+    }
+  }
+
+  static Future<bool> checkConnection() async {
+    try {
+      final url = '$_apiBase/repos/$_owner/$_repo';
+      final response = await http.get(
+        Uri.parse(url),
+        headers: _headers,
+      ).timeout(const Duration(seconds: 10));
+
+      return response.statusCode == 200;
+    } catch (e) {
+      print('GitHub API checkConnection error: $e');
       return false;
     }
   }
