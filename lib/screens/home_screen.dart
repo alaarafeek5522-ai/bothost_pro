@@ -105,8 +105,12 @@ class _HomeScreenState extends State<HomeScreen> {
         
         final isRunning = status['isRunning'] as bool;
         final dirExists = status['dirExists'] as bool;
-        
-        if (!dirExists) {
+        final checkFailed = status['checkFailed'] as bool? ?? false;
+
+        if (checkFailed) {
+          // فشل الفحص نفسه (نت/تايم أوت) - سيبي حالة البوت زي ما هي، متمسحيهوش
+          continue;
+        } else if (!dirExists) {
           provider.removeBot(bot.name);
         } else if (!isRunning) {
           provider.updateBotStatus(bot.name, 'متوقف ⏹️');

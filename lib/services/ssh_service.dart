@@ -399,14 +399,17 @@ class SSHService {
       return {
         'isRunning': processCount > 0 || screenCount > 0,
         'dirExists': dirExists,
+        'checkFailed': false,
         'processCount': processCount,
         'screenCount': screenCount,
         'lastLog': lastLog,
       };
     } catch (e) {
+      // فشل الاتصال/الفحص نفسه (نت، تايم أوت..) - مش دليل إن المجلد اتمسح
       return {
         'isRunning': false,
         'dirExists': false,
+        'checkFailed': true,
         'processCount': 0,
         'screenCount': 0,
         'lastLog': 'Error: $e',
