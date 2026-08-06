@@ -106,6 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
           server,
           bot.name,
           user.deviceId,
+          botFileName: bot.fileName,
         ).timeout(
           const Duration(seconds: 20),
           onTimeout: () => {
@@ -319,6 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
         serverName: server.name,
         status: 'شغال ✅',
         createdAt: DateTime.now(),
+        fileName: _botFileName.isNotEmpty ? _botFileName : 'bot.py', // ✅ نحفظ الاسم الحقيقي
       ));
 
       _showStep('✅ البوت شغال بنجاح!');
@@ -356,7 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final pid = await SSHService.restartBot(
         server, 
         botName,
-        'bot.py',
+        bot.fileName,
         user.deviceId,
       );
       
@@ -402,7 +404,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _showStep('⏹️ جاري إيقاف $botName...');
 
     try {
-      final stopped = await SSHService.stopBot(server, botName, user.deviceId);
+      final stopped = await SSHService.stopBot(server, botName, user.deviceId, botFileName: bot.fileName);
       
       if (stopped) {
         _showStep('✅ تم إيقاف $botName');

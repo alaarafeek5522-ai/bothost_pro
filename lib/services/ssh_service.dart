@@ -228,7 +228,7 @@ class SSHService {
     return steps;
   }
 
-  static Future<bool> stopBot(ServerModel server, String botName, String userId) async {
+  static Future<bool> stopBot(ServerModel server, String botName, String userId, {String botFileName = 'bot.py'}) async {
     SSHClient? client;
     try {
       client = await _connect(server).timeout(const Duration(seconds: 15));
@@ -239,10 +239,10 @@ class SSHService {
         # اقتل الـ screen session
         screen -S ${botName}_bot -X quit 2>/dev/null || true
         # اقتل بالمسار المحدد
-        pkill -9 -f "$botDir/bot.py" 2>/dev/null || true
+        pkill -9 -f "$botDir/$botFileName" 2>/dev/null || true
         sleep 2
         # تأكد
-        ps aux | grep "$botDir/bot.py" | grep -v grep || echo "STOPPED"
+        ps aux | grep "$botDir/$botFileName" | grep -v grep || echo "STOPPED"
       ''');
       
       final output = await _readStream(result.stdout, timeout: const Duration(seconds: 15));
@@ -280,7 +280,7 @@ class SSHService {
     }
   }
 
-  static Future<String> getLogs(ServerModel server, String botName, String userId) async {
+  static Future<String> getLogs(ServerModel server, String botName, String userId, {String botFileName = 'bot.py'}) async {
     SSHClient? client;
     try {
       client = await _connect(server).timeout(const Duration(seconds: 15));
@@ -291,7 +291,7 @@ class SSHService {
         cat $botDir/bot.log 2>&1 || echo "No logs yet" &&
         echo "" &&
         echo "=== PROCESS STATUS ===" &&
-        ps aux | grep "$botDir/bot.py" | grep -v grep || echo "Bot process not found" &&
+        ps aux | grep "$botDir/$botFileName" | grep -v grep || echo "Bot process not found" &&
         echo "" &&
         echo "=== SCREEN SESSIONS ===" &&
         screen -ls | grep ${botName}_bot || echo "No screen session" &&
@@ -346,7 +346,7 @@ class SSHService {
     }
   }
 
-  static Future<Map<String, dynamic>> checkBotStatus(ServerModel server, String botName, String userId) async {
+  static Future<Map<String, dynamic>> checkBotStatus(ServerModel server, String botName, String userId, {String botFileName = 'bot.py'}) async {
     SSHClient? client;
     try {
       client = await _connect(server).timeout(const Duration(seconds: 15));
@@ -354,7 +354,7 @@ class SSHService {
       
       final result = await client.execute('''
         echo "=== CHECK ==="
-        ps aux | grep "$botDir/bot.py" | grep -v grep | wc -l
+        ps aux | grep "$botDir/$botFileName" | grep -v grep | wc -l
         echo "---"
         screen -ls | grep ${botName}_bot | wc -l
         echo "---"

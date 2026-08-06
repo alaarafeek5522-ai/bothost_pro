@@ -32,6 +32,7 @@ class _LogsScreenState extends State<LogsScreen> {
         server, 
         provider.myBot!.name,
         user.deviceId,
+        botFileName: provider.myBot!.fileName,
       );
       provider.setLogs(logs);
       setState(() => _detailedLogs = logs);
