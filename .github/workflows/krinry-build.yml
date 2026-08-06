@@ -14,7 +14,7 @@ on:
         required: true
         default: 'apk'
         type: choice
-        options: [apk, appbundle, apk-split]
+        options: [apk, appbundle]
 
 jobs:
   build:
@@ -32,30 +32,18 @@ jobs:
           flutter-version: '3.41.0'
           channel: 'stable'
 
-      # الخطوة 1: ننشئ android folder الأول
-      - name: Create android folder
-        run: flutter create --platforms android .
-
-      # الخطوة 2: نضيف صلاحيات الإنترنت
-      - name: Add Internet Permissions
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          sed -i 's|</manifest>|<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n</manifest>|' $MANIFEST
-          cat $MANIFEST
-
-      # الخطوة 3: pub get (بعد ما android folder يكون موجود)
       - name: Pub get
         run: flutter pub get
 
-      # الخطوة 4: Build
+      - name: Create android folder
+        run: flutter create --platforms android .
+
       - name: Build
         run: |
           TYPE="${{ github.event.inputs.build_type }}"
           OUT="${{ github.event.inputs.output_type }}"
           if [ "$OUT" = "apk" ]; then
             flutter build apk --$TYPE
-          elif [ "$OUT" = "apk-split" ]; then
-            flutter build apk --$TYPE --split-per-abi
           elif [ "$OUT" = "appbundle" ]; then
             flutter build appbundle --$TYPE
           fi

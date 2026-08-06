@@ -4,23 +4,22 @@ import 'providers/app_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/auth_service.dart';
-import 'services/update_service.dart';
 import 'theme/app_theme.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const BotHostPro());
+  runApp(const TerminalSSHPro());
 }
 
-class BotHostPro extends StatelessWidget {
-  const BotHostPro({super.key});
+class TerminalSSHPro extends StatelessWidget {
+  const TerminalSSHPro({super.key});
 
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => AppProvider(),
       child: MaterialApp(
-        title: 'BotHost Pro',
+        title: 'Terminal SSH Pro',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.darkTheme,
         home: const SplashScreen(),
@@ -46,16 +45,6 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<void> _initApp() async {
     await Future.delayed(const Duration(seconds: 2));
 
-    if (await UpdateService.shouldShowUpdate()) {
-      final update = await UpdateService.checkUpdate();
-      if (update != null && mounted) {
-        if (update['stopped'] == true) {
-          _showStoppedDialog(update['stop_message'] ?? 'التطبيق متوقف مؤقتاً');
-          return;
-        }
-      }
-    }
-
     final user = await AuthService.getCurrentUser();
 
     if (mounted) {
@@ -68,36 +57,13 @@ class _SplashScreenState extends State<SplashScreen> {
     }
   }
 
-  void _showStoppedDialog(String message) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.block, color: Color(0xFFE94560)),
-            SizedBox(width: 10),
-            Text('⛔ التطبيق متوقف'),
-          ],
-        ),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('خروج'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF1A1A2E), Color(0xFF16213E)],
+            colors: [Color(0xFF0D1117), Color(0xFF161B22)],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -106,24 +72,28 @@ class _SplashScreenState extends State<SplashScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.rocket_launch, size: 100, color: Color(0xFF6C63FF)),
+              const Icon(Icons.terminal, size: 100, color: Color(0xFF3FB950)),
               const SizedBox(height: 20),
               Text(
-                'BotHost Pro',
+                'Terminal SSH Pro',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFF6C63FF),
+                      color: const Color(0xFF3FB950),
+                      fontFamily: 'monospace',
                     ),
               ),
               const SizedBox(height: 10),
-              const Text('استضافة البوتات بضغطة زر', style: TextStyle(color: Colors.white70)),
+              const Text(
+                'ترمنال متصل بالسيرفر',
+                style: TextStyle(color: Colors.white70),
+              ),
               const SizedBox(height: 30),
               const SizedBox(
                 width: 40,
                 height: 40,
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
-                  valueColor: AlwaysStoppedAnimation(Color(0xFF6C63FF)),
+                  valueColor: AlwaysStoppedAnimation(Color(0xFF3FB950)),
                 ),
               ),
             ],
