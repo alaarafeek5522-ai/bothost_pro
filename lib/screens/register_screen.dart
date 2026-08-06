@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../services/github_api_service.dart';
 import 'home_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -14,6 +15,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
   bool _isLoading = false;
+  String? _debugInfo;
+
+  Future<void> _testApi() async {
+    setState(() {
+      _isLoading = true;
+      _debugInfo = 'Testing API...';
+    });
+
+    final result = await GitHubAPIService.testConnection();
+    
+    setState(() {
+      _debugInfo = '''
+API Test:
+Success: ${result['success']}
+Status: ${result['statusCode']}
+Body: ${result['body'] ?? result['error']}
+''';
+      _isLoading = false;
+    });
+  }
 
   Future<void> _register() async {
     if (_emailController.text.isEmpty || 
@@ -124,6 +145,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA6)),
                 ),
               ),
+              const SizedBox(height: 15),
+              OutlinedButton.icon(
+                onPressed: _isLoading ? null : _testApi,
+                icon: const Icon(Icons.bug_report),
+                label: const Text('اختبار الاتصال بالسيرفر'),
+              ),
+              if (_debugInfo != null) ...[
+                const SizedBox(height: 15),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF161B22),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF30363D)),
+                  ),
+                  child: Text(
+                    _debugInfo!,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
