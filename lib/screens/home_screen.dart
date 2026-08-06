@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../models/server_model.dart';  // ✅ ناقص ده
 import '../services/server_service.dart';
 import '../services/auth_service.dart';
 import '../services/ssh_service.dart';
@@ -287,7 +288,7 @@ class _HomeScreenState extends State<HomeScreen> {
               value: server,
               groupValue: provider.selectedServer,
               activeColor: const Color(0xFF00BFA6),
-              onChanged: (value) => provider.setSelectedServer(value),
+              onChanged: (ServerModel? value) => provider.setSelectedServer(value),
             ),
           )),
         ],

@@ -242,7 +242,6 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       ),
       body: Column(
         children: [
-          // Path Bar
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -278,8 +277,6 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
               ],
             ),
           ),
-
-          // Actions Bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: const BoxDecoration(
@@ -311,8 +308,6 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
               ],
             ),
           ),
-
-          // Files List
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())

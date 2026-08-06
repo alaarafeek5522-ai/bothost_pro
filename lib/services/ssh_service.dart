@@ -69,8 +69,7 @@ class SSHService {
 
     // نبدأ shell session
     final session = await client.shell(
-      pty: SSHPtyConfig(
-        term: 'xterm-256color',
+      pty: const SSHPtyConfig(
         width: 120,
         height: 40,
       ),

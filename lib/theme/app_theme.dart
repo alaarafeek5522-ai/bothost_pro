@@ -7,6 +7,13 @@ class AppTheme {
   static const Color dark = Color(0xFF1A1A2E);
   static const Color card = Color(0xFF16213E);
   static const Color error = Color(0xFFE94560);
+  
+  // Terminal colors
+  static const Color terminalBg = Color(0xFF0D1117);
+  static const Color terminalGreen = Color(0xFF3FB950);
+  static const Color terminalYellow = Color(0xFFD29922);
+  static const Color terminalRed = Color(0xFFF85149);
+  static const Color terminalBlue = Color(0xFF58A6FF);
 
   static ThemeData darkTheme = ThemeData(
     useMaterial3: true,
@@ -24,7 +31,7 @@ class AppTheme {
       elevation: 0,
       centerTitle: true,
     ),
-    cardTheme: CardThemeData(
+    cardTheme: CardTheme(
       color: card,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 4,

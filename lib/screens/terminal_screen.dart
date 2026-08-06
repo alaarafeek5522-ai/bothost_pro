@@ -58,7 +58,6 @@ class _TerminalScreenState extends State<TerminalScreen> {
       return;
     }
 
-    // أضف للتاريخ
     if (_commandHistory.isEmpty || _commandHistory.last != command) {
       _commandHistory.add(command);
     }
@@ -164,7 +163,6 @@ class _TerminalScreenState extends State<TerminalScreen> {
           ),
           body: Column(
             children: [
-              // Terminal Output Area
               Expanded(
                 child: Container(
                   margin: const EdgeInsets.all(8),
@@ -195,8 +193,6 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   ),
                 ),
               ),
-
-              // Command Input
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -244,8 +240,6 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   ],
                 ),
               ),
-
-              // Quick Commands Bar
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: const BoxDecoration(
